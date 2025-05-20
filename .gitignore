@@ -1,0 +1,41 @@
+# Python virtual environments
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Configuration files with sensitive information
+pipeline_config.yaml
+
+# Build and output directories
+output/
+models/
+frameworks/
+keyframes/
+*.mp4
+*.png
+*.jpg
+*.jpeg
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Log files
+*.log
+history.txt
+
+# Archive files
+*.zip
+*.tar.gz
+*.tgz

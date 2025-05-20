@@ -1,0 +1,79 @@
+# Pipeline Configuration for Long Video Generation
+
+# Base configuration
+task: flf2v-14B
+size: 1280*720
+#initial_image: frames/start-frame.png
+prompt: >
+  Animated short, classic slapstick cat-and-mouse cartoon featuring Milo, an orange tabby cat, and Pip, a grey mouse, in 1940s cel-animation style with a vibrant palette.  
+  The scene begins in a classroom with a chalkboard reading "Fun with Fractions!"  
+  Milo writes "1/2 + 1/4 = ?" on the chalkboard.  
+  Pip wheels in a big round cheese.  
+  A chase ensues where Milo's swipe slices the cheese into two 1/2 pieces, and Pip's dodge cuts one half into four 1/4 pieces, with fraction labels appearing in mid-air.  
+  Milo slips on a 1/4 slice, sliding across the floor.  
+  Pip skateboards on a 1/4 slice down a ruler ramp.  
+  Milo pauses, holding a 1/2 slice, and Pip holds a 1/4 slice.  
+  They place their slices next to a chalkboard drawing showing 1/2 plus 1/4 equals 3/4.  
+  The scene ends with Milo and Pip high-fiving, with bold on-screen text "1/2 + 1/4 = 3/4!"
+
+# Framework and model paths
+
+# Wan2.1 paths
+wan2_dir: ./frameworks/Wan2.1          # Path to Wan2.1 framework code
+flf2v_model_dir: ./models/Wan2.1-FLF2V-14B-720P  # Path to the FLF2V model weights
+
+# FramePack paths (uncomment if using FramePack)
+# framepack_dir: ./frameworks/FramePack    # Path to the FramePack repository
+
+# GPU settings
+total_gpus: 1        # Total number of GPUs available in the system
+parallel_segments: 1  # Number of segments to generate in parallel
+
+# Parallelization strategy:
+# The system will automatically calculate how many GPUs to use per segment:
+# gpus_per_segment = total_gpus / parallel_segments
+#
+# Examples:
+# - With total_gpus=8, parallel_segments=4: Four segments in parallel, each using 2 GPUs
+# - With total_gpus=8, parallel_segments=2: Two segments in parallel, each using 4 GPUs
+# - With total_gpus=8, parallel_segments=1: One segment at a time using all 8 GPUs
+# - With total_gpus=8, parallel_segments=8: Eight segments in parallel, each using 1 GPU
+
+# Text-to-image model configuration for keyframe generation
+# Options:
+#  - "stabilityai/sd3:stable" (Stability AI SD3 model)
+#  - "openai/gpt-image-1" (OpenAI GPT Image model)
+text_to_image_model: "stabilityai/sd3:stable"
+
+# Image size configuration (depends on model)
+# - For OpenAI gpt-image-1: "1536x1024" (landscape) or "1024x1536" (portrait)
+# - For Stability AI: Always "1024x1024" (square)
+image_size: "1536x1024"
+
+# API keys for image generation - add your keys here
+image_router_api_key: "YOUR_IMAGE_ROUTER_API_KEY"
+stability_api_key: "YOUR_STABILITY_API_KEY" # Stability AI API key
+
+# OpenAI API key (used for both prompt enhancement and image generation)
+openai_api_key: "YOUR_OPENAI_API_KEY"
+openai_base_url: https://api.openai.com/v1
+openai_model: gpt-4  # or "o4-mini" if you have access
+
+# Image-to-image settings
+auto_create_masks: true # Automatically create masks for image-to-image generation
+mask_prompt: "Generate a mask where white (255) represents the main character and black (0) is the background"
+
+# Optional starting image for sequential keyframe generation
+# If provided, this will be used as the initial frame for character consistency
+# initial_image: "/path/to/starting_frame.png"
+
+# Generation parameters
+frame_num: 81
+sample_steps: 40
+sample_shift: 5.0
+guide_scale: 5.0
+base_seed: 42
+
+# Output directories
+output_dir: output
+frames_dir: frames
