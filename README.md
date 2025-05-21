@@ -1,15 +1,23 @@
 # TTV Pipeline
 
-An end-to-end pipeline for generating long-form videos from text prompts using Stability AI or OpenAI for keyframe generation and Wan2.1 FLF2V model for video segments, with support for GPU parallelization.
+An end-to-end pipeline for generating high-quality long-form videos from text prompts.
 
 ## Overview
 
-This project implements a multi-stage pipeline that:
-1. Breaks down a long text prompt into segments
-2. Enhances prompts using OpenAI/Instructor with colorized output
-3. Generates keyframes for each segment using Stability AI or OpenAI gpt-image-1
-4. Uses Wan2.1 FLF2V model to generate video segments between keyframes (with parallel processing)
-5. Stitches segments together into a final video
+Generating high-quality long-form videos from text is challenging due to limitations in current AI video models:
+
+- Most models can only generate short 5-10 second clips
+- Quality degrades in longer videos due to "drifting"
+- Character consistency is difficult to maintain
+
+This pipeline solves these problems by:
+
+1. Breaking your long prompt into optimal segments
+2. Creating keyframe images for each segment
+3. Generating video between keyframes with continuity
+4. Processing segments in parallel across multiple GPUs
+5. Combining everything into a seamless final video
+
 
 ## Project Structure
 
@@ -72,9 +80,9 @@ Optimization strategies:
 
 ### Dependencies
 - Python 3.8+
-- Stability AI API (for keyframe generation)
+- Stability AI API or Open AI gpt-image-1 (for keyframe generation)
 - OpenAI API (for prompt enhancement)
-- Wan2.1 FLF2V model
+- Wan2.1 I2V (for chaining mode) or FLF2V model (for keyframe mode)
 - FramePack (optional, for additional video generation capabilities)
 - Pydantic & Instructor (for structured output)
 
@@ -92,7 +100,7 @@ Optimization strategies:
    # Edit pipeline_config.yaml to add your API keys
    ```
 
-3. Run the setup script to download required frameworks and models
+3. Run the setup script to download required frameworks and models (NOTE: this is not fully tested yet):
    ```bash
    # Make the script executable
    chmod +x setup.sh
@@ -109,31 +117,29 @@ Optimization strategies:
 python pipeline.py --config pipeline_config.yaml
 ```
 
-## Pipeline Stages
+## How It Works
 
-1. **Prompt Enhancement**
-   - Uses OpenAI API with Instructor to structure and expand prompts
-   - Colored terminal output for better visualization of prompt segments
-   - Outputs enhanced_prompt.json with segment details
+### Pipeline Stages
 
-2. **Keyframe Generation**
-   - Supports multiple image generation models:
-     - Stability AI API for consistent character generation (1024x1024)
-     - OpenAI's gpt-image-1 model for high-quality keyframes (1536x1024)
-   - Supports sequential generation where each keyframe influences the next
-   - Outputs keyframes to `output/frames/`
+1. **Prompt Enhancement**: Transforms your single prompt into optimized segment prompts using AI
 
-3. **Video Segment Generation**
-   - Multiple options for video generation:
-     - Wan2.1 FLF2V model (default) to generate video segments between keyframes
-     - FramePack integration (optional) for alternative video generation capabilities
-   - Parallel processing for increased throughput
-   - Distributed GPU usage for faster generation
-   - Saves video segments to `output/videos/`
+2. **Keyframe Generation**: Creates key visual anchors for your video using either:
+   - Stability AI API for consistent character generation (1024x1024)
+   - OpenAI's gpt-image-1 model for high-quality images (1536x1024)
 
-4. **Video Concatenation**
-   - Stitches all generated video segments together
-   - Produces a final continuous video
+3. **Video Generation**: Currently supports "Keyframe Mode" using Wan2.1 FLF2V
+   - Generates video segments between your keyframes
+   - Uses distributed GPU processing for speed
+   - Future: "Chaining Mode" for alternative workflow
+
+4. **Video Concatenation**: Stitches all segments together into your final video
+
+### Key Features
+
+- **Robust Error Handling**: Automatic retries with prompt rewording for API failures
+- **Resource Optimization**: Intelligent GPU allocation for parallel processing
+- **User-Friendly Output**: Color-coded terminal outputs for tracking progress
+- **Flexible Configuration**: Customize all aspects via simple YAML configuration
 
 ## Directory Structure
 
