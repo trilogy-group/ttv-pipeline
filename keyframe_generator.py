@@ -97,10 +97,6 @@ def generate_keyframe_with_imageRouter(prompt, output_path, model_name, imageRou
 def generate_keyframe_with_stability(prompt, output_path, stability_api_key, input_image_path=None):
     """Generate a keyframe image using Stability AI API with optional image-to-image"""
     try:
-        # Log the redacted API key to verify it's not empty
-        api_key_prefix = stability_api_key[:4] if stability_api_key and len(stability_api_key) > 4 else "None"
-        logging.info(f"Using Stability AI API key starting with: {api_key_prefix}...")
-        
         # Set headers
         headers = {
             "Authorization": f"Bearer {stability_api_key}",
@@ -251,18 +247,58 @@ def save_base64_image(base64_str, save_path):
         logging.error(f"Failed to save base64 image: {e}")
         return False
 
-def generate_keyframe_with_openai(prompt, output_path, openai_api_key, input_image_path=None, mask_path=None, size="1536x1024"):
-    """Generate a keyframe image using OpenAI's gpt-image-1 model"""
+def reword_prompt_for_safety(prompt, openai_api_key):
+    """Use OpenAI to reword a prompt to avoid content moderation issues"""
     try:
-        import openai
         from openai import OpenAI
-        import base64
-        from io import BytesIO
         
-        # Log the redacted API key to verify it's not empty
-        api_key_prefix = openai_api_key[:4] if openai_api_key and len(openai_api_key) > 4 else "None"
-        logging.info(f"Using OpenAI API key starting with: {api_key_prefix}...")
+        # Initialize OpenAI client
+        client = OpenAI(api_key=openai_api_key)
         
+        # Create a system message that asks for rewording
+        system_message = """
+        You are a helpful assistant that rewrites prompts to be safe and compliant with AI image generation guidelines.
+        Reword the provided prompt to maintain its meaning but avoid any content that might trigger moderation systems.
+        Focus on:
+        1. Removing potentially problematic terms
+        2. Using more neutral language
+        3. Preserving the core visual concept
+        4. Maintaining artistic style descriptions
+        
+        Respond ONLY with the reworded prompt, nothing else.
+        """
+        
+        # Generate a reworded prompt
+        response = client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": system_message},
+                {"role": "user", "content": f"Please reword this image generation prompt to avoid content moderation issues: {prompt}"}
+            ],
+            temperature=0.7,
+            max_tokens=300
+        )
+        
+        reworded_prompt = response.choices[0].message.content.strip()
+        logging.info(f"Reworded prompt: {reworded_prompt}")
+        return reworded_prompt
+    except Exception as e:
+        logging.error(f"Error rewording prompt: {e}")
+        # Return original prompt if rewording fails
+        return prompt
+
+def generate_keyframe_with_openai(prompt, output_path, openai_api_key, input_image_path=None, mask_path=None, size="1536x1024", max_retries=2):
+    """Generate a keyframe image using OpenAI's gpt-image-1 model with automatic retries"""
+    import openai
+    from openai import OpenAI
+    import base64
+    from io import BytesIO
+    import time
+    
+    # Import Colors for reworded prompts display
+    from pipeline import Colors
+    
+    try:
         # Initialize OpenAI client
         client = OpenAI(api_key=openai_api_key)
         
@@ -275,8 +311,8 @@ def generate_keyframe_with_openai(prompt, output_path, openai_api_key, input_ima
                 "model": "gpt-image-1",
                 "prompt": prompt,
                 "n": 1,
-                "size": size,
-                "response_format": "b64_json"  # Request base64 response
+                "size": size
+                # gpt-image-1 doesn't need explicit response_format
             }
             
             # Open the input image
@@ -287,10 +323,26 @@ def generate_keyframe_with_openai(prompt, output_path, openai_api_key, input_ima
                 logging.info(f"Using mask image: {mask_path}")
                 edit_args["mask"] = open(mask_path, "rb")
             
-            logging.info(f"Using OpenAI images.edit with prompt: {prompt}")
-            
-            # Using the images.edit endpoint
-            response = client.images.edit(**edit_args)
+            # Using the images.edit endpoint with retry mechanism
+            for retry in range(max_retries + 1):  # +1 for initial attempt
+                try:
+                    if retry > 0:
+                        logging.info(f"Retry {retry}/{max_retries} for prompt...")
+                        # If this is the second retry, reword the prompt
+                        if retry == 2:
+                            prompt = reword_prompt_for_safety(prompt, openai_api_key)
+                            edit_args["prompt"] = prompt
+                            print(f"\n{Colors.BOLD}Reworded prompt:{Colors.RESET} {Colors.YELLOW}{prompt}{Colors.RESET}")
+                    
+                    # Make the API call
+                    response = client.images.edit(**edit_args)
+                    break  # If successful, exit retry loop
+                except Exception as e:
+                    logging.error(f"Error on attempt {retry+1}: {e}")
+                    if retry == max_retries:  # If we've exhausted our retries
+                        raise  # Re-raise the last exception
+                    # Add a short delay between retries
+                    time.sleep(2)
             
             # Process base64 response
             image_base64 = response.data[0].b64_json
@@ -308,14 +360,30 @@ def generate_keyframe_with_openai(prompt, output_path, openai_api_key, input_ima
             
         else:
             # Text-to-image generation
-            logging.info(f"Using OpenAI images.generate with prompt: {prompt}")
-            response = client.images.generate(
-                model="gpt-image-1",
-                prompt=prompt,
-                n=1,
-                size=size,
-                response_format="b64_json"  # Request base64 response
-            )
+            # Using the images.generate endpoint with retry mechanism
+            for retry in range(max_retries + 1):  # +1 for initial attempt
+                try:
+                    if retry > 0:
+                        logging.info(f"Retry {retry}/{max_retries} for prompt...")
+                        # If this is the second retry, reword the prompt
+                        if retry == 2:
+                            prompt = reword_prompt_for_safety(prompt, openai_api_key)
+                            print(f"\n{Colors.BOLD}Reworded prompt:{Colors.RESET} {Colors.YELLOW}{prompt}{Colors.RESET}")
+                    
+                    # Make the API call
+                    response = client.images.generate(
+                        model="gpt-image-1",
+                        prompt=prompt,
+                        n=1,
+                        size=size
+                    )
+                    break  # If successful, exit retry loop
+                except Exception as e:
+                    logging.error(f"Error on attempt {retry+1}: {e}")
+                    if retry == max_retries:  # If we've exhausted our retries
+                        raise  # Re-raise the last exception
+                    # Add a short delay between retries
+                    time.sleep(2)
             
             # Process base64 response
             image_base64 = response.data[0].b64_json
@@ -360,8 +428,7 @@ def create_mask_for_image(image_path, output_mask_path, openai_api_key, prompt=N
         response = client.images.edit(
             model="gpt-image-1",
             image=open(image_path, "rb"),
-            prompt=prompt,
-            response_format="b64_json"
+            prompt=prompt
         )
         
         # Save the mask
@@ -387,8 +454,15 @@ def create_mask_for_image(image_path, output_mask_path, openai_api_key, prompt=N
         logging.error(f"Error creating mask: {e}")
         return None
 
-def generate_keyframe(prompt, output_path, model_name=None, imageRouter_api_key=None, stability_api_key=None, openai_api_key=None, input_image_path=None, mask_path=None, size=None, create_mask=False):
-    """Generate a keyframe image from a prompt using available APIs"""
+def generate_keyframe(prompt, output_path, model_name, imageRouter_api_key=None, stability_api_key=None, openai_api_key=None, input_image_path=None, mask_path=None, size=None, create_mask=False):
+    """Wrapper function to generate a keyframe using the appropriate API"""
+    # Import Colors class for colored output
+    from pipeline import Colors
+    
+    # Print the prompt in blue right before generating the image
+    print(f"\n{Colors.BOLD}Keyframe prompt:{Colors.RESET} {Colors.BLUE}{prompt}{Colors.RESET}")
+    
+    logging.info(f"Generating keyframe with model: {model_name}")
     
     # Set default model if none provided
     if model_name is None:
@@ -512,13 +586,13 @@ def generate_keyframes_from_json(json_file, output_dir, model_name=None, imageRo
         output_path = os.path.join(output_dir, f"segment_{segment:02d}.png")
         logging.info(f"Will save keyframe to: {os.path.abspath(output_path)}")
         
-        logging.info(f"Generating keyframe {segment}/{len(data['keyframe_prompts'])}")
-        if prev_image_path:
-            logging.info(f"Using previous image for consistency: {prev_image_path}")
+        # Removed redundant "Generating keyframe X/Y" message
+        # The keyframe message is already shown in colored output
         
         try:
             # Generate keyframe image
             if prev_image_path:
+                # Only keep one of the prev image messages
                 logging.info(f"Using previous keyframe as input: {prev_image_path}")
                 generated_file = generate_keyframe(
                     prompt=prompt,
@@ -528,7 +602,9 @@ def generate_keyframes_from_json(json_file, output_dir, model_name=None, imageRo
                     stability_api_key=stability_api_key,
                     openai_api_key=openai_api_key,
                     input_image_path=prev_image_path,
-                    size=image_size
+                    mask_path=None,
+                    size=image_size,
+                    create_mask=False
                 )
             else:
                 # For first keyframe, use initial image if provided
@@ -544,7 +620,9 @@ def generate_keyframes_from_json(json_file, output_dir, model_name=None, imageRo
                     stability_api_key=stability_api_key,
                     openai_api_key=openai_api_key,
                     input_image_path=initial_input,
-                    size=image_size
+                    mask_path=None,
+                    size=image_size,
+                    create_mask=False
                 )
             
             generated_files.append(generated_file)
@@ -554,7 +632,6 @@ def generate_keyframes_from_json(json_file, output_dir, model_name=None, imageRo
             
             # Display colorful progress information
             print(f"{Colors.BOLD}{Colors.YELLOW}Segment {segment}{Colors.RESET} keyframe {Colors.GREEN}generated{Colors.RESET}")
-            logging.info(f"Generated keyframe {segment}/{len(data['keyframe_prompts'])}")
         except Exception as e:
             # Display error in red
             print(f"{Colors.BOLD}{Colors.RED}Error generating keyframe for segment {segment}: {e}{Colors.RESET}")
@@ -592,12 +669,16 @@ def main():
     
     if args.command == "single":
         generate_keyframe(
-            args.prompt, 
-            args.output, 
-            args.model, 
-            args.imageRouter_api_key, 
-            args.stability_api_key, 
-            args.input_image
+            prompt=args.prompt, 
+            output_path=args.output, 
+            model_name=args.model, 
+            imageRouter_api_key=args.imageRouter_api_key, 
+            stability_api_key=args.stability_api_key, 
+            openai_api_key=None,  # Need to add this parameter
+            input_image_path=args.input_image,
+            mask_path=None,
+            size=None,
+            create_mask=False
         )
     elif args.command == "batch":
         generate_keyframes_from_json(

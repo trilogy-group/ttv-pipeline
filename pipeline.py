@@ -109,6 +109,7 @@ Prompting Guidelines: Effective Prompting Techniques
 Generate Keyframe Prompts
 - Write text-to-image prompts for the last frame of each segment.
 - Focus on the static scene: characters, objects, setting, and style.
+- Note that each segment is prompted separate, with no knowledge of prior segments other than the reference image. Therefore, if you refer to characters by name, be sure to explain who they are in the prompt.
 - Exclude camera movement; emphasize visual composition.
 - Each keyframe prompt generates an image (e.g., `segment_01.png`) that becomes the last frame of its segment and the first frame of the next segment.
 
@@ -404,8 +405,10 @@ def generate_single_video_segment(
     # Choose between distributed or non-distributed execution
     if gpu_count > 1:
         # Distributed execution with torchrun
-        logging.info(f"Using distributed execution with torchrun for segment {seg}")
-        cmd = ["torchrun", f"--nproc_per_node={gpu_count}", "generate.py"]
+        # Use different ports for different segment processes to avoid conflicts
+        port = 29500 + seg  # Use different ports based on segment number
+        logging.info(f"Using distributed execution with torchrun for segment {seg} (port {port})")
+        cmd = ["torchrun", f"--nproc_per_node={gpu_count}", f"--rdzv_endpoint=localhost:{port}", "generate.py"]
         # Add FSDP flags for distributed training
         cmd.extend(base_cmd)
         cmd.extend(["--dit_fsdp", "--t5_fsdp"])
@@ -636,8 +639,10 @@ def generate_video_segments_sequential(
         # Choose between distributed or non-distributed execution
         if gpu_count > 1:
             # Distributed execution with torchrun
-            logging.info("Using distributed execution with torchrun")
-            cmd = ["torchrun", f"--nproc_per_node={gpu_count}", "generate.py"]
+            # Use different ports for different segment processes to avoid conflicts
+            port = 29500 + int(processing_segment)  # Use different ports based on segment number
+            logging.info(f"Using distributed execution with torchrun for segment {processing_segment} (port {port})")
+            cmd = ["torchrun", f"--nproc_per_node={gpu_count}", f"--rdzv_endpoint=localhost:{port}", "generate.py"]
             # Add FSDP flags for distributed training
             cmd.extend(base_cmd)
             cmd.extend(["--dit_fsdp", "--t5_fsdp"])
@@ -735,38 +740,34 @@ def enhance_prompt(prompt: str, config: Dict, output_dir: str) -> Dict:
         else:
             result_dict = result.dict()
         
-        # Format the segments dict for easier handling
-        enhanced_data = {
-            "keyframe_prompts": [],
-            "video_prompts": []
-        }
+        # The response is already in the right structure, add debugging output
+        print(f"DEBUG - Response keys: {result_dict.keys()}")
+        
+        # Create a copy of the result to modify as needed
+        enhanced_data = result_dict
         
         # Display the enhanced segmented prompts in colors
         print(f"\n{Colors.BOLD}{Colors.PURPLE}Enhanced Prompt Segments:{Colors.RESET}")
         
+        # Get the segment count from the segmentation logic
+        num_segments = result_dict["segmentation_logic"]["number_of_segments"]
+        print(f"DEBUG - Number of segments: {num_segments}")
+        
         # Create formatted output for each segment
-        for segment in result_dict["segments"]:
-            segment_num = segment["segment_number"]
-            keyframe_prompt = segment["keyframe_prompt"]
-            video_prompt = segment["video_prompt"]
+        for i in range(len(result_dict["keyframe_prompts"])):
+            keyframe_info = result_dict["keyframe_prompts"][i]
+            video_info = result_dict["video_prompts"][i]
+            
+            segment_num = keyframe_info["segment"]
+            keyframe_prompt = keyframe_info["prompt"]
+            video_prompt = video_info["prompt"]
             
             # Display segment number in yellow/bold
             print(f"\n{Colors.BOLD}{Colors.YELLOW}Segment {segment_num}:{Colors.RESET}")
-            # Display keyframe prompt in blue
-            print(f"{Colors.BLUE}{keyframe_prompt}{Colors.RESET}")
-            # Display video prompt in cyan
-            print(f"\n{Colors.CYAN}{video_prompt}{Colors.RESET}")
-            
-            # Add to the structured result
-            enhanced_data["keyframe_prompts"].append({
-                "segment": segment_num,
-                "prompt": keyframe_prompt
-            })
-            
-            enhanced_data["video_prompts"].append({
-                "segment": segment_num,
-                "prompt": video_prompt
-            })
+            # Display keyframe prompt in blue with label
+            print(f"{Colors.BOLD}Keyframe:{Colors.RESET} {Colors.BLUE}{keyframe_prompt}{Colors.RESET}")
+            # Display video prompt in cyan with label
+            print(f"\n{Colors.BOLD}Video Clip:{Colors.RESET} {Colors.CYAN}{video_prompt}{Colors.RESET}")
         
         print("\n") # Add spacing for readability
         logging.info(f"Enhanced prompt into {len(enhanced_data['keyframe_prompts'])} segments")
@@ -810,7 +811,6 @@ def run_pipeline(config_path: str) -> None:
     os.makedirs(videos_dir, exist_ok=True)
     
     # Log directory structure
-    logging.info(f"SIMPLIFIED PATHS:")
     logging.info(f"Frames directory: {frames_dir}")
     logging.info(f"Videos directory: {videos_dir}")
 
@@ -850,21 +850,81 @@ def run_pipeline(config_path: str) -> None:
     
     initial_image = config.get('initial_image')
     
-    # Log which API will be used
-    if stability_api_key:
-        logging.info("Using Stability AI API for sequential keyframe generation with character consistency")
+    # Log which API will be used based on configured model
+    if "openai" in text_to_image_model.lower():
+        if config.get('openai_api_key'):
+            logging.info(f"Using OpenAI API ({text_to_image_model}) for keyframe generation")
+        else:
+            logging.warning(f"Selected model {text_to_image_model} but no OpenAI API key provided")
+    elif "stability" in text_to_image_model.lower():
+        if stability_api_key:
+            logging.info(f"Using Stability AI API ({text_to_image_model}) for keyframe generation")
+        else:
+            logging.warning(f"Selected model {text_to_image_model} but no Stability AI API key provided")
     elif imageRouter_api_key:
-        logging.info("Using ImageRouter API for keyframe generation")
+        logging.info(f"Using ImageRouter API with model {text_to_image_model} for keyframe generation")
     else:
-        logging.warning("No API keys provided for image generation")
+        logging.warning("No suitable API keys provided for the selected image generation model")
     
-    if initial_image:
-        logging.info(f"Starting keyframe generation with initial image: {initial_image}")
-        logging.info(f"Starting keyframe generation for {len(enhanced_data['keyframe_prompts'])} segments")
-        print(f"\n{Colors.BOLD}{Colors.PURPLE}Generating Keyframes:{Colors.RESET}")
+    # Check if we need to generate an initial frame (segment_00.png)
+    if not initial_image:
+        # Need to generate segment_00.png as our starting point
+        logging.info("No initial image provided, generating segment_00.png first")
+        print(f"\n{Colors.BOLD}{Colors.PURPLE}Generating Initial Frame (segment_00.png):{Colors.RESET}")
+        
+        # Create a prompt for the initial frame based on the first segment
+        if len(enhanced_data['keyframe_prompts']) > 0:
+            first_segment_prompt = enhanced_data['keyframe_prompts'][0]['prompt']
+            # Create a starting frame prompt by modifying the first segment's prompt
+            initial_frame_prompt = f"First frame establishing shot: {first_segment_prompt}"
+            
+            # Generate the initial frame using the prompt
+            from keyframe_generator import generate_keyframe_with_openai, generate_keyframe_with_stability
+            
+            # Set up output path
+            frames_dir = os.path.join(output_dir, "frames")
+            os.makedirs(frames_dir, exist_ok=True)
+            initial_frame_path = os.path.join(frames_dir, "segment_00.png")
+            
+            # Generate using appropriate API
+            if "openai" in text_to_image_model.lower() and config.get('openai_api_key'):
+                logging.info(f"Generating initial frame with OpenAI: {initial_frame_prompt}")
+                try:
+                    generate_keyframe_with_openai(
+                        prompt=initial_frame_prompt,
+                        output_path=initial_frame_path,
+                        openai_api_key=config.get('openai_api_key'),
+                        size=image_size
+                    )
+                    initial_image = initial_frame_path  # Use this as our initial image
+                    logging.info(f"Generated initial frame at {initial_frame_path}")
+                except Exception as e:
+                    logging.error(f"Failed to generate initial frame: {e}")
+                    raise
+            elif "stability" in text_to_image_model.lower() and stability_api_key:
+                logging.info(f"Generating initial frame with Stability AI: {initial_frame_prompt}")
+                try:
+                    generate_keyframe_with_stability(
+                        prompt=initial_frame_prompt,
+                        output_path=initial_frame_path,
+                        stability_api_key=stability_api_key
+                    )
+                    initial_image = initial_frame_path  # Use this as our initial image
+                    logging.info(f"Generated initial frame at {initial_frame_path}")
+                except Exception as e:
+                    logging.error(f"Failed to generate initial frame: {e}")
+                    raise
+            else:
+                logging.error("Unable to generate initial frame, no suitable API keys provided")
+                raise ValueError("Cannot generate initial frame without OpenAI or Stability AI API keys")
+    
+    # Now proceed with main keyframe generation
+    logging.info(f"Starting keyframe generation for {len(enhanced_data['keyframe_prompts'])} segments")
+    print(f"\n{Colors.BOLD}{Colors.PURPLE}Generating Keyframes:{Colors.RESET}")
     
     # Generate keyframes sequentially for character consistency
     keyframe_paths = generate_keyframes(
+        config=config,
         keyframe_prompts=enhanced_data['keyframe_prompts'],
         output_dir=frames_dir,
         model_name=text_to_image_model,
@@ -874,6 +934,33 @@ def run_pipeline(config_path: str) -> None:
         initial_image_path=initial_image,
         image_size=image_size
     )
+    
+    # Ensure segment_00.png exists before proceeding to video generation
+    # This is critical for the first segment to work correctly
+    segment_00_path = os.path.join(frames_dir, "segment_00.png")
+    if not os.path.exists(segment_00_path) and len(keyframe_paths) > 0:
+        logging.info(f"Creating segment_00.png as a copy of the first keyframe")
+        import shutil
+        try:
+            # Copy the first segment's keyframe as segment_00.png
+            shutil.copy2(keyframe_paths[0], segment_00_path)
+            logging.info(f"Created segment_00.png by copying {keyframe_paths[0]}")
+            # Verify the file exists after copy
+            if os.path.exists(segment_00_path):
+                logging.info(f"Verified segment_00.png exists at {segment_00_path}")
+            else:
+                logging.error(f"Failed to create segment_00.png after copy operation")
+        except Exception as e:
+            logging.error(f"Error creating segment_00.png: {e}")
+            # Try an alternative approach - create a symbolic link
+            try:
+                os.symlink(keyframe_paths[0], segment_00_path)
+                logging.info(f"Created symlink for segment_00.png pointing to {keyframe_paths[0]}")
+            except Exception as e2:
+                logging.error(f"Error creating symlink: {e2}")
+    
+    # Double-check the frames directory contents before video generation
+    logging.info(f"Frames directory contents before video generation: {os.listdir(frames_dir)}")
     
     # Step 3: Generate video segments
     logging.info("Generating video segments...")
