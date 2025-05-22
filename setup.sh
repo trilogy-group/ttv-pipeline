@@ -36,9 +36,9 @@ git clone https://github.com/Wan-Ai/Wan2.1.git ./frameworks/Wan2.1
 echo "Downloading FLF2V model weights..."
 huggingface-cli download Wan-AI/Wan2.1-FLF2V-14B-720P --local-dir ./models/Wan2.1-FLF2V-14B-720P
 
-# Optional: Download additional models if needed
-# Uncomment the lines below if you need these models
-# huggingface-cli download Wan-AI/Wan2.1-I2V-14B-720P --local-dir ./models/Wan2.1-I2V-14B-720P
+# Download the I2V model weights for chaining mode
+echo "Downloading I2V model weights..."
+huggingface-cli download Wan-AI/Wan2.1-I2V-14B-720P --local-dir ./models/Wan2.1-I2V-14B-720P
 
 # Setup FramePack (optional but recommended)
 setup_framepack() {

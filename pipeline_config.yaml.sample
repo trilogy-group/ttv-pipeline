@@ -18,9 +18,17 @@ prompt: >
 
 # Framework and model paths
 
-# Wan2.1 paths
+# Generation mode settings
+generation_mode: "keyframe"  # Options: "keyframe" or "chaining"
+
+# Chaining mode specific settings
+chaining_max_retries: 3        # Maximum number of retry attempts for failed segments
+chaining_use_fsdp_flags: true  # Whether to use FSDP flags for distributed training
+
+# Model paths
 wan2_dir: ./frameworks/Wan2.1          # Path to Wan2.1 framework code
-flf2v_model_dir: ./models/Wan2.1-FLF2V-14B-720P  # Path to the FLF2V model weights
+flf2v_model_dir: ./models/Wan2.1-FLF2V-14B-720P  # Path to the FLF2V model weights (for keyframe mode)
+i2v_model_dir: ./models/Wan2.1-I2V-14B-720P      # Path to the I2V model weights (for chaining mode)
 
 # FramePack paths (uncomment if using FramePack)
 # framepack_dir: ./frameworks/FramePack    # Path to the FramePack repository
@@ -43,7 +51,7 @@ parallel_segments: 1  # Number of segments to generate in parallel
 # Options:
 #  - "stabilityai/sd3:stable" (Stability AI SD3 model)
 #  - "openai/gpt-image-1" (OpenAI GPT Image model)
-text_to_image_model: "stabilityai/sd3:stable"
+text_to_image_model: "openai/gpt-image-1"
 
 # Image size configuration (depends on model)
 # - For OpenAI gpt-image-1: "1536x1024" (landscape) or "1024x1536" (portrait)
@@ -57,10 +65,10 @@ stability_api_key: "YOUR_STABILITY_API_KEY" # Stability AI API key
 # OpenAI API key (used for both prompt enhancement and image generation)
 openai_api_key: "YOUR_OPENAI_API_KEY"
 openai_base_url: https://api.openai.com/v1
-openai_model: gpt-4  # or "o4-mini" if you have access
+openai_model: o4-mini
 
 # Image-to-image settings
-auto_create_masks: true # Automatically create masks for image-to-image generation
+auto_create_masks: false # Automatically create masks for image-to-image generation
 mask_prompt: "Generate a mask where white (255) represents the main character and black (0) is the background"
 
 # Optional starting image for sequential keyframe generation

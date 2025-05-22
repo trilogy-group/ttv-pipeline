@@ -169,13 +169,12 @@ Segmentation addresses fundamental video generation challenges by:
 
 ## Next Steps
 
-1. **Add Chaining Mode Functionality**:
-   - Create separate prompts, one for each segment:
-     - A video clip prompt to generate that segment's video with an image-to-video model
-     - Use the previous clip's last frame (automatically extracted) as the reference image for the next segment
-     - Use the provided initial image as the reference for the first segment
-   - Implement automatic frame extraction using ffmpeg
-   - Only sequential segment generation is supported in this mode, but can still do distributed processing for each segment
+1. **Add Remote API Support for Video Generation**:
+   - Integrate high-end cloud-based video generation models (Runway ML, Google Veo 3)
+   - Create abstraction layer for seamless switching between local and remote backends
+   - Perfect for users without access to high-end GPUs
+   - Leverage existing chaining mode infrastructure
+   - See detailed implementation plan below
 
 2. **Add FramePack integration**:
    - Find a way to use FramePack programmatically instead of via Gradio
@@ -200,3 +199,117 @@ Segmentation addresses fundamental video generation challenges by:
    - Explore model quantization for reduced memory usage
    - Implement more sophisticated GPU allocation strategies
 
+## Remote API Integration Plan
+
+### Overview
+
+The integration of remote video generation APIs addresses a critical accessibility challenge: not everyone has access to multiple H200 GPUs required for local video generation. By supporting cloud-based APIs like Runway ML and Google's Veo 3, we can democratize access to high-quality video generation while maintaining all the sophisticated features of our pipeline.
+
+### Architecture Design
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                    Pipeline.py                          │
+│                 (Main Orchestrator)                     │
+└────────────────────┬────────────────────────────────────┘
+                     │
+                     ▼
+┌─────────────────────────────────────────────────────────┐
+│              Video Generator Interface                   │
+│                 (New Abstraction Layer)                 │
+├─────────────────────┬───────────────────────────────────┤
+│   Local Generators  │      Remote API Generators        │
+├────────────┬────────┼─────────┬────────────┬───────────┤
+│  Wan2.1    │ Frame  │ Runway  │  Google    │  Future   │
+│  I2V/FLF2V │ Pack   │   ML    │   Veo 3    │   APIs    │
+└────────────┴────────┴─────────┴────────────┴───────────┘
+```
+
+### Why Remote APIs?
+
+1. **Accessibility**: Users without high-end GPUs can still generate professional videos
+2. **Scalability**: No local hardware constraints, can process multiple videos simultaneously
+3. **Cost Efficiency**: Pay-per-use model may be more economical than GPU rental
+4. **Quality**: Access to state-of-the-art models without local deployment
+5. **Maintenance**: No need to manage model updates or infrastructure
+
+### Target APIs
+
+#### Runway ML
+- **Models**: Gen-3 Alpha, Gen-3 Alpha Turbo
+- **Capabilities**: High-quality image-to-video generation
+- **Duration**: 5-10 second clips
+- **Strengths**: Excellent motion quality, good prompt adherence
+- **API Pattern**: Job queue system (submit → poll → download)
+
+#### Google Veo 3
+- **Capabilities**: State-of-the-art video generation
+- **Duration**: Variable length clips
+- **Strengths**: Superior quality, better temporal consistency
+- **API Pattern**: Google Cloud integration
+
+### Implementation Components
+
+1. **Video Generator Interface** (`video_generator_interface.py`)
+   - Abstract base class defining the contract for all video generators
+   - Standardized interface for local and remote backends
+   - Common error handling and retry logic
+
+2. **Remote API Generators** (`generators/` directory)
+   - `runway_generator.py`: Runway ML API integration
+   - `veo3_generator.py`: Google Veo 3 integration
+   - `wan21_generator.py`: Wrapper for existing local generation
+   - Future: Easy to add new APIs following the same pattern
+
+3. **Cost Management** (`cost_estimator.py`)
+   - Real-time cost estimation before generation
+   - Usage tracking and budgeting
+   - Cost comparison between different backends
+
+4. **Job Management**
+   - Asynchronous job handling for remote APIs
+   - Progress monitoring and status updates
+   - Automatic retry with exponential backoff
+   - Fallback to alternative APIs on failure
+
+### Configuration Updates
+
+```yaml
+# New configuration options
+video_generation_backend: "runway"  # Options: "wan2.1", "runway", "veo3", "framepack"
+
+# Remote API configurations
+runway_ml:
+  api_key: "your-runway-api-key"
+  model_version: "gen-3-alpha"  # or "gen-3-alpha-turbo"
+  max_duration: 10  # seconds
+  
+google_veo:
+  api_key: "your-google-api-key"
+  project_id: "your-project-id"
+  model_version: "veo-3"
+  region: "us-central1"
+  
+# Backend-specific parameters
+remote_api_settings:
+  max_retries: 3
+  polling_interval: 10  # seconds
+  timeout: 600  # seconds
+  fallback_backend: "wan2.1"  # Fallback option if primary fails
+```
+
+### Benefits
+
+1. **Flexibility**: Choose between local processing and cloud APIs based on needs
+2. **Reliability**: Automatic fallback between different backends
+3. **Future-Proof**: Easy to add new video generation APIs as they emerge
+4. **Cost Control**: Built-in cost estimation and budget management
+5. **Performance**: Leverage the best model for each use case
+
+### Implementation Timeline
+
+- **Week 1**: Core infrastructure (interface, base classes, configuration)
+- **Week 2**: Runway ML integration and testing
+- **Week 3**: Google Veo 3 integration and testing
+- **Week 4**: Pipeline integration and error handling
+- **Week 5**: Testing, documentation, and examples

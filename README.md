@@ -9,14 +9,24 @@ Generating high-quality long-form videos from text is challenging due to limitat
 - Most models can only generate short 5-10 second clips
 - Quality degrades in longer videos due to "drifting"
 - Character consistency is difficult to maintain
+- High-end GPUs (like H200s) are not accessible to everyone
 
 This pipeline solves these problems by:
 
 1. Breaking your long prompt into optimal segments
 2. Creating keyframe images for each segment
 3. Generating video between keyframes with continuity
-4. Processing segments in parallel across multiple GPUs
+4. Processing segments in parallel across multiple GPUs OR using cloud APIs
 5. Combining everything into a seamless final video
+
+### New: Remote API Support (Coming Soon)
+
+The pipeline will soon support remote video generation APIs, making high-quality video generation accessible without expensive GPU hardware:
+
+- **Runway ML**: Access Gen-3 Alpha models via API
+- **Google Veo 3**: State-of-the-art video generation via Google Cloud
+- **Seamless Integration**: Switch between local and cloud generation with a simple config change
+- **Cost Effective**: Pay-per-use model may be more economical than GPU rental
 
 
 ## Project Structure
