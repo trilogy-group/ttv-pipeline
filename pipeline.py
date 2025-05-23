@@ -19,13 +19,15 @@ import os
 import subprocess
 import tempfile
 import time
+import yaml
+from frame_extractor import extract_last_frame
+from generators.factory import create_video_generator, get_fallback_generator
+from video_generator_interface import VideoGenerationError, APIError, GenerationTimeoutError, InvalidInputError, QuotaExceededError
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
-
-import yaml
-import requests
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
+from instructor import from_openai, Mode
 
 def load_config(config_path: str) -> dict:
     """Load configuration from YAML file"""
@@ -36,8 +38,6 @@ def load_config(config_path: str) -> dict:
     except Exception as e:
         logging.error(f"Failed to load configuration from {config_path}: {e}")
         raise
-
-from instructor import from_openai, Mode
 
 # Terminal colors for pretty output
 class Colors:
@@ -690,7 +690,7 @@ def enhance_prompt(prompt: str, config: Dict, output_dir: str) -> Dict:
     # Extract configuration
     api_key = config.get("openai_api_key")
     base_url = config.get("openai_base_url")
-    model = config.get("openai_model", "gpt-4")
+    model = config.get("prompt_enhancement_model", "gpt-4o-mini")
     
     if not api_key:
         logging.warning("No OpenAI API key provided, skipping prompt enhancement")
@@ -790,34 +790,51 @@ def enhance_prompt(prompt: str, config: Dict, output_dir: str) -> Dict:
 # ============================================================================
 
 def generate_video_chaining_mode(
-    wan2_dir: str,
     config: Dict,
     video_prompts: List[Dict],
-    output_dir: str,
-    i2v_model_dir: str,
-    frame_num: int = 81,
+    output_dir: str,  # Absolute path, prepared by run_pipeline
+    segment_duration: float,
 ) -> List[str]:
     """Generate video segments sequentially using the I2V model in chaining mode"""
     video_paths = []
-    
-    # Import frame extraction functionality
-    from frame_extractor import extract_last_frame
-    
-    # ALWAYS use this exact directory structure - no exceptions
-    base_dir = os.getcwd()
-    frames_dir = os.path.join(base_dir, "output", "frames")
-    videos_dir = os.path.join(base_dir, "output", "videos")
-    extracted_frames_dir = os.path.join(base_dir, "output", "extracted_frames")
-    
-    # Create directories if they don't exist
+
+    # Determine backend and initialize generator
+    primary_backend_name = config.get("default_backend", "wan2.1")
+    if not primary_backend_name:
+        logging.error("No 'default_backend' specified in configuration.")
+        raise ValueError("Missing 'default_backend' in configuration.")
+
+    attempted_backends_global = set() # Keep track of backends attempted across all segments for primary generator selection
+    current_generator = None
+
+    try:
+        logging.info(f"Attempting to initialize primary backend: {primary_backend_name}")
+        current_generator = create_video_generator(primary_backend_name, config)
+        attempted_backends_global.add(primary_backend_name)
+    except VideoGenerationError as e:
+        logging.error(f"Failed to initialize primary backend {primary_backend_name}: {e}")
+        fallback_generator_init = get_fallback_generator(primary_backend_name, config, attempted_backends_global)
+        if fallback_generator_init:
+            current_generator = fallback_generator_init
+            primary_backend_name = current_generator.get_backend_name()
+            logging.info(f"Successfully initialized fallback generator: {primary_backend_name}")
+            attempted_backends_global.add(primary_backend_name)
+        else:
+            logging.error("No available video generation backends could be initialized.")
+            raise
+
+    if not current_generator:
+        logging.error("Failed to initialize any video generator.")
+        raise VideoGenerationError("Could not initialize any video generator.")
+
+    # Use the absolute output_dir passed from run_pipeline
+    frames_dir = os.path.join(output_dir, "frames")
+    videos_dir = os.path.join(output_dir, "videos")
+    extracted_frames_dir = os.path.join(output_dir, "extracted_frames")
+
     os.makedirs(frames_dir, exist_ok=True)
     os.makedirs(videos_dir, exist_ok=True)
     os.makedirs(extracted_frames_dir, exist_ok=True)
-    
-    # Get chaining mode specific parameters from config
-    gpu_count = config.get("total_gpus", config.get("gpu_count", 8))
-    max_retries = config.get("chaining_max_retries", 3)
-    use_fsdp_flags = config.get("chaining_use_fsdp_flags", True)
     
     for idx, item in enumerate(video_prompts):
         seg, prompt_text = item["segment"], item["prompt"]
@@ -831,7 +848,9 @@ def generate_video_chaining_mode(
                 input_image = config.get("initial_image")
                 # Always use absolute paths for consistency
                 if not os.path.isabs(input_image):
-                    input_image = os.path.abspath(os.path.join(os.getcwd(), input_image))
+                    first_file = os.path.abspath(os.path.join(os.getcwd(), input_image))
+                else:
+                    first_file = os.path.abspath(input_image)
                 
                 logging.info(f"Using initial image for first segment: {input_image}")
                 if not os.path.exists(input_image):
@@ -914,133 +933,81 @@ def generate_video_chaining_mode(
             
             logging.info(f"Using extracted frame from previous segment: {input_image}")
         
-        # Output video file path
-        video_file = os.path.join(videos_dir, f"segment_{seg:02d}.mp4")
-        
-        # Create a shell script to handle the command with properly quoted prompt
-        script_file = os.path.join(extracted_frames_dir, f"generate_segment_{seg:02d}.sh")
-        
-        # Parameters for the command
-        gpu_param = f"--nproc_per_node={gpu_count}" if gpu_count > 1 else ""
-        port_param = f"--rdzv_endpoint=localhost:{29500 + int(seg)}" if gpu_count > 1 else ""
-        
-        # For distributed processing with I2V model, include all required flags
-        if gpu_count >= 2:
-            # Always include ulysses_size for I2V when using multiple GPUs
-            # According to Wan2.1 docs, ulysses_size must match the number of GPUs being used
-            # and model's num_heads must be divisible by ulysses_size
-            dist_flags = f"--ulysses_size {gpu_count}"
-            
-            # Add FSDP flags if enabled
-            if use_fsdp_flags:
-                dist_flags += " --dit_fsdp --t5_fsdp"
-        else:
-            # For single GPU processing, don't use ulysses_size
-            dist_flags = ""
-        run_cmd = "torchrun" if gpu_count > 1 else "python"
-        
-        # Create the shell script with proper quoting
-        with open(script_file, 'w') as f:
-            f.write("#!/bin/bash\n\n")
-            # Use triple quotes to properly handle multi-line string
-            # Escape single quotes in the prompt text for shell safety
-            safe_prompt = prompt_text.replace("'", "'\\''")
-            
-            cmd_str = f"""{run_cmd} {gpu_param} {port_param} generate.py \
-  --save_file {video_file} \
-  --task i2v-14B \
-  --size {config.get('size', '1280*720')} \
-  --ckpt_dir {i2v_model_dir} \
-  --image {input_image} \
-  --prompt '{safe_prompt}' \
-  --sample_guide_scale {config.get('guide_scale', 5.0)} \
-  --sample_steps {config.get('sample_steps', 40)} \
-  --sample_shift {config.get('sample_shift', 5.0)} \
-  {dist_flags}"""
-            f.write(cmd_str)
-        
-        # Make the script executable
-        os.chmod(script_file, 0o755)
-        logging.info(f"Created script for segment {seg} at {script_file}")
-        
-        # Use the script to run the command
-        cmd = [script_file]
-        
-        # Log the execution mode based on the shell script params
-        if gpu_count > 1:
-            logging.info(f"Using distributed execution with torchrun for segment {seg} (port {29500 + int(seg)})")
-        else:
-            logging.info("Using non-distributed execution with python")
-        
-        # The cmd is already fully constructed in the shell script
-        
-        logging.info(f"Generating video for segment {seg} with prompt: {prompt_text}")
-        
-        # Add retry logic for robustness (using config parameter)
-        retry_count = 0
-        success = False
-        
-        while retry_count < max_retries and not success:
+        # Ensure input_image is an absolute path
+        if not os.path.isabs(input_image):
+            input_image = os.path.abspath(input_image)
+
+        video_file_output_path = os.path.join(videos_dir, f"segment_{seg:02d}.mp4")
+        if not os.path.isabs(video_file_output_path):
+            video_file_output_path = os.path.abspath(video_file_output_path)
+
+        segment_generated_successfully = False
+        # Attempt to generate the segment with the current generator, then fallbacks if needed
+        attempt_generator = current_generator
+        attempted_backends_segment = {current_generator.get_backend_name()} # Track attempted backends for this segment
+
+        while attempt_generator:
             try:
-                if retry_count > 0:
-                    logging.info(f"Retry attempt {retry_count} for segment {seg}")
+                logging.info(f"Attempting segment {seg} with {attempt_generator.get_backend_name()}...")
                 
-                # Execute the script
-                try:
-                    run_command(cmd, cwd=wan2_dir)
-                except subprocess.CalledProcessError as e:
-                    # If the command fails with exit code 1, try with reduced parameters
-                    logging.warning(f"Command failed with exit code {e.returncode}, trying fallback with reduced parameters")
-                    
-                    # Create a fallback script with fewer parameters
-                    fallback_script = os.path.join(extracted_frames_dir, f"fallback_segment_{seg:02d}.sh")
-                    with open(fallback_script, 'w') as f:
-                        f.write("#!/bin/bash\n\n")
-                        # Use simpler command without distributed training - triple quotes for multi-line
-                        # Escape single quotes in the prompt text for shell safety
-                        safe_prompt = prompt_text.replace("'", "'\\''")
-                        
-                        cmd_str = f"""python generate.py \
-  --save_file {video_file} \
-  --task i2v-14B \
-  --size {config.get('size', '1280*720')} \
-  --ckpt_dir {i2v_model_dir} \
-  --image {input_image} \
-  --prompt '{safe_prompt}' \
-  --sample_guide_scale 3.0 \
-  --sample_steps 30"""
-                        f.write(cmd_str)
-                    
-                    # Make the fallback script executable
-                    os.chmod(fallback_script, 0o755)
-                    logging.info(f"Created fallback script for segment {seg}")
-                    
-                    # Try the fallback command
-                    run_command([fallback_script], cwd=wan2_dir)
+                validation_errors = attempt_generator.validate_inputs(
+                    prompt=prompt_text,
+                    input_image_path=input_image,
+                    duration=segment_duration
+                )
+                if validation_errors:
+                    logging.error(f"Input validation failed for segment {seg} with {attempt_generator.get_backend_name()}: {validation_errors}")
+                    raise InvalidInputError(f"Validation failed: {'; '.join(validation_errors)}")
+
+                generated_video_path = attempt_generator.generate_video(
+                    prompt=prompt_text,
+                    input_image_path=input_image,
+                    output_path=video_file_output_path,
+                    duration=segment_duration,
+                    frame_num=config.get("frame_num", 81) # Pass frame_num from main config if available
+                )
+
+                if not generated_video_path or not os.path.exists(generated_video_path):
+                    raise VideoGenerationError(f"Generator {attempt_generator.get_backend_name()} reported success but video file not found: {generated_video_path}")
+
+                logging.info(f"{Colors.GREEN}Segment {seg} successfully generated by {attempt_generator.get_backend_name()} at {generated_video_path}{Colors.RESET}")
+                video_paths.append(generated_video_path)
+                segment_generated_successfully = True
+                current_generator = attempt_generator # Update main generator to this successful one for next segment
+                break # Exit while loop for this segment, segment success
+
+            except (VideoGenerationError, APIError, GenerationTimeoutError, InvalidInputError, QuotaExceededError) as e:
+                logging.error(f"Error generating segment {seg} with {attempt_generator.get_backend_name()}: {e}")
+                logging.info(f"Trying to find a fallback generator. Attempted for this segment: {attempted_backends_segment}")
+                # Pass attempted_backends_global to influence future fallback choices if primary keeps failing
+                # Also pass attempted_backends_segment to ensure we don't retry a backend that just failed for this specific segment
+                combined_attempted_backends = attempted_backends_segment.union(attempted_backends_global)
+                fallback_generator = get_fallback_generator(attempt_generator.get_backend_name(), config, combined_attempted_backends)
                 
-                # Check if the video was generated
-                if os.path.exists(video_file):
-                    # Verify the video is valid by checking file size
-                    file_size = os.path.getsize(video_file)
-                    if file_size > 10000:  # Ensure file is at least 10KB
-                        video_paths.append(video_file)
-                        logging.info(f"Generated video segment {seg}: {video_file} (size: {file_size/1024:.1f} KB)")
-                        success = True
-                    else:
-                        logging.warning(f"Generated video has suspiciously small size: {file_size/1024:.1f} KB")
-                        os.remove(video_file)  # Remove potentially corrupt file
-                        raise ValueError(f"Video file size too small: {file_size/1024:.1f} KB")
+                if fallback_generator:
+                    logging.info(f"Switching to fallback generator: {fallback_generator.get_backend_name()} for segment {seg}")
+                    attempt_generator = fallback_generator
+                    attempted_backends_segment.add(fallback_generator.get_backend_name()) 
+                    # attempted_backends_global is updated by get_fallback_generator if a new one is chosen
                 else:
-                    raise FileNotFoundError(f"Generated video not found: {video_file}")
-                    
-            except Exception as e:
-                retry_count += 1
-                logging.error(f"Error generating segment {seg} (attempt {retry_count}/{max_retries}): {str(e)}")
-                if retry_count >= max_retries:
-                    logging.error(f"Failed to generate video for segment {seg} after {max_retries} attempts")
-                    raise
-                # Wait before retrying
-                time.sleep(2)
+                    logging.error(f"No more fallback generators available for segment {seg} after {attempt_generator.get_backend_name()} failed.")
+                    attempt_generator = None 
+            except Exception as e: # Catch any other unexpected errors
+                logging.error(f"Unexpected error generating segment {seg} with {attempt_generator.get_backend_name()}: {e}")
+                logging.info(f"Trying to find a fallback generator. Attempted for this segment: {attempted_backends_segment}")
+                combined_attempted_backends = attempted_backends_segment.union(attempted_backends_global)
+                fallback_generator = get_fallback_generator(attempt_generator.get_backend_name(), config, combined_attempted_backends)
+                if fallback_generator:
+                    logging.info(f"Switching to fallback generator: {fallback_generator.get_backend_name()} for segment {seg}")
+                    attempt_generator = fallback_generator
+                    attempted_backends_segment.add(fallback_generator.get_backend_name())
+                else:
+                    logging.error(f"No more fallback generators available for segment {seg} after {attempt_generator.get_backend_name()} failed.")
+                    attempt_generator = None
+        
+        if not segment_generated_successfully:
+            logging.error(f"{Colors.RED}Failed to generate segment {seg} after trying all available backends.{Colors.RESET}")
+            raise VideoGenerationError(f"Failed to generate segment {seg}. Aborting pipeline.")
     
     return video_paths
 
@@ -1246,11 +1213,17 @@ def run_pipeline(config_path: str) -> None:
         extracted_frames_dir = os.path.join(output_dir, "extracted_frames")
         os.makedirs(extracted_frames_dir, exist_ok=True)
         
-        # Get I2V model directory for chaining mode
-        i2v_model_dir = config.get('i2v_model_dir', './Wan2.1-I2V-14B-720P')
-        if not os.path.exists(i2v_model_dir):
-            logging.error(f"I2V model directory not found: {i2v_model_dir}")
-            raise FileNotFoundError(f"I2V model directory not found: {i2v_model_dir}")
+        # Check backend configuration - only require I2V model for local backends
+        default_backend = config.get('default_backend', 'wan2.1')
+        
+        # Only check for I2V model directory if using local backend
+        if default_backend in ['wan2.1', 'local']:
+            i2v_model_dir = config.get('i2v_model_dir', './Wan2.1-I2V-14B-720P')
+            if not os.path.exists(i2v_model_dir):
+                logging.error(f"I2V model directory not found: {i2v_model_dir}")
+                raise FileNotFoundError(f"I2V model directory not found: {i2v_model_dir}")
+        else:
+            logging.info(f"Using remote backend: {default_backend}, skipping local model checks")
         
         # Step 3: Generate video segments using I2V model in chaining mode
         logging.info("Generating video segments using I2V model (chaining mode)...")
@@ -1258,12 +1231,10 @@ def run_pipeline(config_path: str) -> None:
         
         # Generate video segments in chaining mode (must be sequential)
         video_paths = generate_video_chaining_mode(
-            wan2_dir=wan2_dir,
             config=config,
             video_prompts=enhanced_data['video_prompts'],
             output_dir=output_dir,
-            i2v_model_dir=i2v_model_dir,
-            frame_num=config.get('frame_num', 81)
+            segment_duration=config.get('segment_duration_seconds', 5.0)  # Default to 5.0s if not in config
         )
         
         # Skip to video concatenation step

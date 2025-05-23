@@ -1,41 +1,41 @@
 # Pipeline Configuration for Long Video Generation
+# Supports both local (Wan2.1) and remote (Runway, Veo3) backends
 
 # Base configuration
 task: flf2v-14B
 size: 1280*720
-#initial_image: frames/start-frame.png
 prompt: >
-  Animated short, classic slapstick cat-and-mouse cartoon featuring Milo, an orange tabby cat, and Pip, a grey mouse, in 1940s cel-animation style with a vibrant palette.  
-  The scene begins in a classroom with a chalkboard reading "Fun with Fractions!"  
-  Milo writes "1/2 + 1/4 = ?" on the chalkboard.  
-  Pip wheels in a big round cheese.  
-  A chase ensues where Milo's swipe slices the cheese into two 1/2 pieces, and Pip's dodge cuts one half into four 1/4 pieces, with fraction labels appearing in mid-air.  
-  Milo slips on a 1/4 slice, sliding across the floor.  
-  Pip skateboards on a 1/4 slice down a ruler ramp.  
-  Milo pauses, holding a 1/2 slice, and Pip holds a 1/4 slice.  
-  They place their slices next to a chalkboard drawing showing 1/2 plus 1/4 equals 3/4.  
+  Animated short, classic slapstick cat-and-mouse cartoon featuring Milo, an orange tabby cat, and Pip, a grey mouse, in 1940s cel-animation style with a vibrant palette.
+  The scene begins in a classroom with a chalkboard reading "Fun with Fractions!"
+  Milo writes "1/2 + 1/4 = ?" on the chalkboard.
+  Pip wheels in a big round cheese.
+  A chase ensues where Milo's swipe slices the cheese into two 1/2 pieces, and Pip's dodge cuts one half into four 1/4 pieces, with fraction labels appearing in mid-air.
+  Milo slips on a 1/4 slice, sliding across the floor.
+  Pip skateboards on a 1/4 slice down a ruler ramp.
+  Milo pauses, holding a 1/2 slice, and Pip holds a 1/4 slice.
+  They place their slices next to a chalkboard drawing showing 1/2 plus 1/4 equals 3/4.
   The scene ends with Milo and Pip high-fiving, with bold on-screen text "1/2 + 1/4 = 3/4!"
 
-# Framework and model paths
+# Backend selection (wan2.1, runway, veo3, auto)
+# If set to "auto", the system will automatically select the best available backend
+default_backend: veo3
 
-# Generation mode settings
-generation_mode: "keyframe"  # Options: "keyframe" or "chaining"
+# Generation mode settings (for local Wan2.1 backend)
+generation_mode: "chaining"  # Options: "keyframe" or "chaining"
 
-# Chaining mode specific settings
-chaining_max_retries: 3        # Maximum number of retry attempts for failed segments
-chaining_use_fsdp_flags: true  # Whether to use FSDP flags for distributed training
+# ============================================================================
+# LOCAL BACKEND CONFIGURATION (Wan2.1)
+# ============================================================================
 
-# Model paths
-wan2_dir: ./frameworks/Wan2.1          # Path to Wan2.1 framework code
-flf2v_model_dir: ./models/Wan2.1-FLF2V-14B-720P  # Path to the FLF2V model weights (for keyframe mode)
-i2v_model_dir: ./models/Wan2.1-I2V-14B-720P      # Path to the I2V model weights (for chaining mode)
+# Model paths for Wan2.1
+wan2_dir: ./Wan2.1                              # Path to Wan2.1 framework code
+flf2v_model_dir: ./models/Wan2.1-FLF2V-14B-720P # Path to the FLF2V model weights (for keyframe mode)
+i2v_model_dir: ./models/Wan2.1-I2V-14B-720P     # Path to the I2V model weights (for chaining mode)
 
-# FramePack paths (uncomment if using FramePack)
-# framepack_dir: ./frameworks/FramePack    # Path to the FramePack repository
-
-# GPU settings
+# GPU settings for local generation
 total_gpus: 1        # Total number of GPUs available in the system
-parallel_segments: 1  # Number of segments to generate in parallel
+parallel_segments: 1 # Number of segments to generate in parallel
+gpu_count: 1         # GPUs to use per generation (legacy support)
 
 # Parallelization strategy:
 # The system will automatically calculate how many GPUs to use per segment:
@@ -47,41 +47,95 @@ parallel_segments: 1  # Number of segments to generate in parallel
 # - With total_gpus=8, parallel_segments=1: One segment at a time using all 8 GPUs
 # - With total_gpus=8, parallel_segments=8: Eight segments in parallel, each using 1 GPU
 
+# Chaining mode specific settings
+chaining_max_retries: 3        # Maximum number of retry attempts for failed segments
+chaining_use_fsdp_flags: true  # Whether to use FSDP flags for distributed training
+
+# FramePack paths (uncomment if using FramePack)
+# framepack_dir: ./frameworks/FramePack    # Path to the FramePack repository
+
+# ============================================================================
+# REMOTE BACKEND CONFIGURATION
+# ============================================================================
+
+# Remote API configuration - Runway ML
+runway_ml:
+  api_key: "YOUR_RUNWAY_API_KEY"  # Required for Runway ML
+  model_version: "gen4_turbo"     # Options: gen4_turbo, gen3a_turbo
+  max_duration: 5                 # Maximum video duration in seconds (5-10)
+  default_ratio: "1280:720"       # Default resolution: 1280:720 (16:9), 720:1280 (9:16), 1104:832 (4:3), 832:1104 (3:4), 960:960 (1:1), 1584:672 (21:9)
+  seed: null                      # Optional: seed for reproducibility (0 to 4294967295)
+
+# Remote API configuration - Google Veo 3
+google_veo:
+  project_id: "YOUR_GCP_PROJECT_ID"      # Required for Veo 3
+  credentials_path: "credentials.json"   # Path to service account credentials
+  region: "us-central1"
+  veo_model: "veo-3.0-generate-preview"  # Veo 3
+#  output_bucket: "your-output-bucket"    # Optional: GCS bucket for outputs
+
+# Remote API settings (applies to all API backends)
+remote_api_settings:
+  max_retries: 3            # Maximum retry attempts
+  timeout: 600              # Maximum wait time in seconds
+  # fallback_backend: "wan2.1" # Fallback if primary API fails (comment out to disable fallback)
+
+# ============================================================================
+# IMAGE GENERATION CONFIGURATION
+# ============================================================================
+
 # Text-to-image model configuration for keyframe generation
 # Options:
 #  - "stabilityai/sd3:stable" (Stability AI SD3 model)
 #  - "openai/gpt-image-1" (OpenAI GPT Image model)
+#  - "stable-diffusion" (Stability AI)
 text_to_image_model: "openai/gpt-image-1"
 
-# Image size configuration (depends on model)
-# - For OpenAI gpt-image-1: "1536x1024" (landscape) or "1024x1536" (portrait)
+# Image size configuration (depends on model and video backend)
+# - For OpenAI gpt-image-1: "1024x1024" (1:1), "1536x1024" (3:2), "1024x1536" (2:3)  
 # - For Stability AI: Always "1024x1024" (square)
-image_size: "1536x1024"
+# - For veo3 input: Must be 16:9, 9:16, or 1:1 - recommend "1024x1024" (1:1)
+image_size: "1024x1024"  # 1:1 aspect ratio - compatible with veo3 input requirements
 
-# API keys for image generation - add your keys here
-image_router_api_key: "YOUR_IMAGE_ROUTER_API_KEY"
-stability_api_key: "YOUR_STABILITY_API_KEY" # Stability AI API key
+# Video aspect ratio for veo3 backend (separate from image size)
+# - "16:9" (widescreen landscape) - recommended for most content
+# - "9:16" (portrait/mobile) - for vertical content
+video_aspect_ratio: "16:9"  # Default to widescreen landscape
 
-# OpenAI API key (used for both prompt enhancement and image generation)
+# API keys for image generation services
+image_router_api_key: "YOUR_IMAGE_ROUTER_API_KEY"  # For ImageRouter service
+
+stability_api_key: "YOUR_STABILITY_API_KEY"  # Stability AI API key
+
+# OpenAI API configuration
+# The API key is used for:
+# - Image generation when text_to_image_model is "openai/gpt-image-1"
+# - Prompt enhancement using the model specified below
 openai_api_key: "YOUR_OPENAI_API_KEY"
 openai_base_url: https://api.openai.com/v1
-openai_model: o4-mini
 
-# Image-to-image settings
-auto_create_masks: false # Automatically create masks for image-to-image generation
-mask_prompt: "Generate a mask where white (255) represents the main character and black (0) is the background"
+# Model used for prompt enhancement
+prompt_enhancement_model: o4-mini
+
+# ============================================================================
+# GENERATION PARAMETERS
+# ============================================================================
+
+# Video generation parameters (applies to all backends)
+segment_duration_seconds: 5.0 # Desired duration for each video segment in seconds
+frame_num: 81         # Number of frames (for ~5 seconds at 16fps)
+sample_steps: 40      # Sampling steps
+sample_shift: 5.0     # Sampling shift factor
+guide_scale: 5.0      # Guidance scale for generation
+base_seed: 42         # Random seed for reproducibility
 
 # Optional starting image for sequential keyframe generation
 # If provided, this will be used as the initial frame for character consistency
 # initial_image: "/path/to/starting_frame.png"
 
-# Generation parameters
-frame_num: 81
-sample_steps: 40
-sample_shift: 5.0
-guide_scale: 5.0
-base_seed: 42
+# ============================================================================
+# OUTPUT CONFIGURATION
+# ============================================================================
 
 # Output directories
 output_dir: output
-frames_dir: frames

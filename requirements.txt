@@ -1,19 +1,33 @@
-# Core dependencies
-numpy>=1.20.0
-torch>=2.0.0
-torchvision>=0.15.0
-pillow>=9.0.0
+# TTV Pipeline Requirements
+# All dependencies needed to run the TTV pipeline with both local and remote backends
+# Local backends (like Wan2.1) handle their own additional requirements separately
+
+# Core pipeline dependencies
 pyyaml>=6.0
 tqdm>=4.64.0
 ffmpeg-python>=0.2.0
-huggingface_hub>=0.17.0
 
 # OpenAI and prompt handling
 openai>=1.0.0
 instructor>=0.4.0
 pydantic>=2.0.0
 
-# Image processing
-stability-sdk>=0.6.0
+# Image processing (lightweight)
+pillow>=9.0.0
 requests>=2.28.0
 python-dotenv>=1.0.0
+
+# Image generation APIs
+stability-sdk>=0.6.0
+
+# Remote API support
+# Runway ML
+runwayml>=3.1.0
+# Google Veo 3 support
+google-genai>=0.1.0
+google-cloud-storage>=2.10.0
+google-auth>=2.23.0
+
+# Additional utilities for API backends
+aiohttp>=3.8.0  # For async HTTP requests
+tenacity>=8.2.0  # For retry logic
