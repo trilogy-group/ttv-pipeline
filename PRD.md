@@ -51,7 +51,7 @@ Video generation with text-to-video models faces several significant challenges:
    - Parallel processing capabilities for multi-segment generation
    - Intelligent GPU resource allocation across segments
    
-   **Chaining Mode: Image-to-Video Generation** (Planned)
+   **Chaining Mode: Image-to-Video Generation**
    - Use image-to-video models that take a reference image and prompt to create video
    - Automatically extract the last frame of each generated segment to use as reference for the next segment
    - Maintains visual continuity while allowing for narrative progression

@@ -17,7 +17,7 @@ This pipeline solves these problems by:
 3. Scaling video generation through flexible parallelization:
    - **GPU Distribution**: Distribute individual segment processing across multiple GPUs (available in all modes)
    - **Parallel Segments**: Process multiple segments simultaneously (keyframe mode only, since chaining mode requires sequential processing)
-   - **Cloud Scaling**: Leverage remote APIs (Runway ML, Veo3) for on-demand processing without local GPU requirements
+   - **Cloud Scaling**: Leverage remote APIs (Runway ML, Veo3, Minimax) for on-demand processing without local GPU requirements
 4. Combining everything into a seamless final video
 
 ### New: Remote API Support Now Available! 
@@ -26,6 +26,7 @@ The pipeline now supports remote video generation APIs, making high-quality vide
 
 - ** Runway ML**: Successfully integrated Gen-4 Turbo models via API with full support for image-to-video generation
 - ** Google Veo 3**: State-of-the-art video generation via Google Cloud (initial implementation ready for final testing once allowlisted)
+- ** Minimax**: Cost-effective I2V-01-Director model with advanced camera movement controls and 6-second generation capability
 - ** Seamless Integration**: Switch between local (Wan2.1) and cloud generation, or set a preferred default and fallback, all through `pipeline_config.yaml`
 - ** Cost Effective**: Pay-per-use model for cloud APIs can be more economical than GPU rental for some use cases
 - ** Environment Variable Security**: API keys are securely managed through environment variables
@@ -66,7 +67,7 @@ See the "Configuration" section for details on setting up different backends.
    - Use image-to-video models that take a reference image and prompt to create video
    - Automatically extract the last frame of each generated segment to use as reference for the next segment
    - Maintains visual continuity while allowing for narrative progression
-   - Used by remote APIs (Runway ML, Veo3) and local Wan2.1 I2V models
+   - Used by remote APIs (Runway ML, Veo3, Minimax) and local Wan2.1 I2V models
    - Sequential processing required to maintain frame continuity
 
 ### 4. Video Concatenation
@@ -78,7 +79,7 @@ See the "Configuration" section for details on setting up different backends.
 ### Core Files
 - `pipeline.py` - Main orchestration script that runs the end-to-end video generation pipeline
 - `keyframe_generator.py` - Handles generation of keyframes using Stability AI or OpenAI API
-- `pipeline_config.yaml.sample` - Comprehensive sample configuration file. Copy to `pipeline_config.yaml` and customize for your API keys, preferred backends (local Wan2.1, Runway, Google Veo), generation parameters, and other settings.
+- `pipeline_config.yaml.sample` - Comprehensive sample configuration file. Copy to `pipeline_config.yaml` and customize for your API keys, preferred backends (local Wan2.1, Runway, Google Veo, Minimax), generation parameters, and other settings.
 - `setup.sh` - Script to set up the environment and download necessary models for local generation.
 - `requirements.txt` - Python dependencies for the project.
 - `generators/` - Directory containing the video generator abstraction layer, including interfaces and specific backend implementations (local and remote).
@@ -98,7 +99,7 @@ After running the setup script (for local Wan2.1 usage), your project will have 
 │
 ├── generators/           # Video Generator Abstraction Layer
 │   ├── local/            # Local generator implementations (e.g., Wan2.1)
-│   ├── remote/           # Remote API generator implementations (e.g., Runway, Veo3)
+│   ├── remote/           # Remote API generator implementations (e.g., Runway, Veo3, Minimax)
 │   ├── factory.py        # Factory for creating generator instances
 │   └── video_generator_interface.py # Base interface for video generators
 │
@@ -121,7 +122,7 @@ All pipeline behavior is controlled through `pipeline_config.yaml`. Copy `pipeli
     *   `task`, `size`, `prompt`: Core details for your video.
 
 2.  **Backend Selection**:
-    *   `default_backend`: Specify your preferred video generation backend (e.g., "wan2.1", "runway", "veo3"). The system will attempt to use this backend first.
+    *   `default_backend`: Specify your preferred video generation backend (e.g., "wan2.1", "runway", "veo3", "minimax"). The system will attempt to use this backend first.
 
 3.  **Local Backend Configuration (Wan2.1)**:
     *   `wan2_dir`, `flf2v_model_dir`, `i2v_model_dir`: Paths for the local Wan2.1 setup.
@@ -131,10 +132,11 @@ All pipeline behavior is controlled through `pipeline_config.yaml`. Copy `pipeli
 4.  **Remote Backend Configuration**:
     *   `runway_ml`: Settings for Runway ML, including `api_key`, `model_version`, etc.
     *   `google_veo`: Settings for Google Veo, including `project_id`, `credentials_path`, etc.
+    *   `minimax`: Settings for Minimax API, including `api_key`, `model_version`, etc.
 
 5.  **Remote API Settings (Common to all remote backends)**:
     *   `max_retries`, `timeout`: General settings for remote API calls.
-    *   `fallback_backend`: (Optional) Specify a backend (e.g., "wan2.1", "runway") to use if the `default_backend` (if it's a remote API) fails. If not set, or if the specified fallback also fails, the system may try other available registered backends.
+    *   `fallback_backend`: (Optional) Specify a backend (e.g., "wan2.1", "runway", "minimax") to use if the `default_backend` (if it's a remote API) fails. If not set, or if the specified fallback also fails, the system may try other available registered backends.
 
 6.  **Cost Optimization**:
     *   `max_cost_per_video`, `prefer_local_when_available`.
@@ -166,7 +168,7 @@ Optimization strategies for local Wan2.1:
 - Use `parallel_segments` equal to the number of segments for maximum throughput (if `total_gpus` allows for at least 1 GPU per segment).
 - Use a balanced approach (e.g., `parallel_segments: 2` with 8 `total_gpus` gives 4 GPUs per segment).
 
-Remote backends (Runway, Veo3) manage their own scaling and do not use these local GPU settings.
+Remote backends (Runway, Veo3, Minimax) manage their own scaling and do not use these local GPU settings.
 
 ## Setup and Requirements
 
@@ -175,7 +177,7 @@ Remote backends (Runway, Veo3) manage their own scaling and do not use these loc
 - For Keyframe Generation: Stability AI API or OpenAI gpt-image-1 API key.
 - For Prompt Enhancement: OpenAI API key.
 - For Local Video Generation (Wan2.1): Wan2.1 I2V model (for chaining mode) or FLF2V model (for keyframe mode). Download via `setup.sh`.
-- For Remote Video Generation: API keys for Runway ML and/or Google Cloud Project with Veo 3 API enabled.
+- For Remote Video Generation: API keys for Runway ML, Google Cloud Project with Veo 3 API enabled, and Minimax API.
 - Pydantic & Instructor (for structured output).
 
 ### Environment Setup
@@ -189,7 +191,7 @@ Remote backends (Runway, Veo3) manage their own scaling and do not use these loc
 2. Copy the sample configuration and add your API keys and preferences:
    ```bash
    cp pipeline_config.yaml.sample pipeline_config.yaml
-   # Edit pipeline_config.yaml to add your API keys for OpenAI, Stability, Runway, Google Cloud, etc.
+   # Edit pipeline_config.yaml to add your API keys for OpenAI, Stability, Runway, Google Cloud, Minimax, etc.
    # Configure your default_backend, model paths (if using local), and other parameters.
    ```
 
@@ -221,7 +223,7 @@ python pipeline.py --config pipeline_config.yaml
    - OpenAI's gpt-image-1 model for high-quality images (1536x1024).
 
 3. **Video Generation**: The pipeline supports two generation modes:
-   - **Chaining Mode**: Uses image-to-video models that sequentially process segments, with each segment's final frame becoming the starting frame for the next segment. Available with local Wan2.1 (I2V model) or remote APIs (Runway, Veo3).
+   - **Chaining Mode**: Uses image-to-video models that sequentially process segments, with each segment's final frame becoming the starting frame for the next segment. Available with local Wan2.1 (I2V model) or remote APIs (Runway, Veo3, Minimax).
    - **Keyframe Mode**: Uses the specialized Wan2.1 FLF2V model to generate video between pre-defined keyframes, enabling parallel processing for faster generation.
    - Includes fallback mechanisms: if the `default_backend` fails, it can switch to a `fallback_backend` or other available generators as configured.
 
@@ -229,7 +231,7 @@ python pipeline.py --config pipeline_config.yaml
 
 ### Key Features
 
-- **Flexible Backend Support**: Choose between local Wan2.1, Runway ML API, or Google Veo 3 API for video generation.
+- **Flexible Backend Support**: Choose between local Wan2.1, Runway ML API, Google Veo 3 API, or Minimax API for video generation.
 - **Fallback System**: Configure fallback backends in case your primary choice fails.
 - **Robust Error Handling**: Automatic retries with prompt rewording for API failures.
 - **Resource Optimization**: Intelligent GPU allocation for parallel processing (local Wan2.1).
