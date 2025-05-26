@@ -12,6 +12,7 @@ from generators.local.wan21_generator import Wan21Generator
 # Import remote generators
 from generators.remote.runway_generator import RunwayMLGenerator
 from generators.remote.veo3_generator import Veo3Generator
+from generators.remote.minimax_generator import MinimaxGenerator
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +21,7 @@ GENERATOR_REGISTRY = {
     "wan2.1": Wan21Generator,
     "runway": RunwayMLGenerator,
     "veo3": Veo3Generator,
+    "minimax": MinimaxGenerator,
 }
 
 
@@ -106,6 +108,24 @@ def create_video_generator(backend: str, config: Dict[str, Any]) -> VideoGenerat
                 raise VideoGenerationError(
                     "Google Veo 3 requires a project ID"
                 )
+        
+        elif backend == "minimax":
+            # Minimax configuration
+            minimax_config = config.get("minimax", {})
+            remote_settings = config.get("remote_api_settings", {})
+            
+            backend_config = {
+                "api_key": minimax_config.get("api_key"),
+                "model": minimax_config.get("model", "I2V-01-Director"),
+                "max_duration": minimax_config.get("max_duration", 6),
+                "base_url": minimax_config.get("base_url", "https://api.minimaxi.chat/v1"),
+                "max_retries": remote_settings.get("max_retries", 3),
+                "polling_interval": remote_settings.get("polling_interval", 5),
+                "timeout": remote_settings.get("timeout", 300),
+            }
+            
+            if not backend_config["api_key"]:
+                raise VideoGenerationError("Minimax API key is required but not provided")
         
         # Create the generator instance
         generator = generator_class(backend_config)
