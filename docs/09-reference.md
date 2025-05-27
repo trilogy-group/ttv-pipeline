@@ -55,7 +55,7 @@ ttv-pipeline/
 └── README.md              # Project documentation
 ```
 
-*Source: [`.gitignore`](../.gitignore) (lines 1-42)*
+*Source: [`.gitignore`](../.gitignore)*
 
 ### Ignored Files and Directories
 
@@ -83,7 +83,7 @@ The project excludes several categories of files from version control to maintai
 - `.vscode/`, `.idea/` - IDE configuration files
 - Development and debugging artifacts
 
-*Source: [`.gitignore`](../.gitignore) (lines 1-42)*
+*Source: [`.gitignore`](../.gitignore)*
 
 ## Development Workflow
 
@@ -154,7 +154,7 @@ The configuration system uses a template-based approach:
 3. Git ignores actual config to prevent secret exposure
 4. Template updates are tracked in version control
 
-*Source: [`.gitignore`](../.gitignore) (lines 11-12)*
+*Source: [`.gitignore`](../.gitignore)*
 
 ## File Type Conventions
 

@@ -24,7 +24,7 @@ The TTV Pipeline provides an automated setup script that handles dependency inst
 
 ### Setup Flow
 
-*Source: [`setup.sh`](../setup.sh) (lines 1-68)*
+*Source: [`setup.sh`](../setup.sh)*
 
 ### Running Setup
 
@@ -38,13 +38,13 @@ chmod +x setup.sh
 The script performs these operations:
 
 1. **Creates a Python virtual environment** in `.venv`
-2. **Installs flash-attn** with optimized compilation settings ([`setup.sh:18`](../setup.sh))
-3. **Installs all dependencies** from `requirements.txt` ([`setup.sh:19`](../setup.sh))
-4. **Downloads the Wan2.1 framework** to `./frameworks/Wan2.1` ([`setup.sh:33`](../setup.sh))
-5. **Downloads FLF2V model weights** (14B parameters, 720P resolution) ([`setup.sh:37`](../setup.sh))
-6. **Downloads I2V model weights** for chaining mode ([`setup.sh:41`](../setup.sh))
+2. **Installs flash-attn** with optimized compilation settings
+3. **Installs all dependencies** from `requirements.txt`
+4. **Downloads the Wan2.1 framework** to `./frameworks/Wan2.1`
+5. **Downloads FLF2V model weights** (14B parameters, 720P resolution)
+6. **Downloads I2V model weights** for chaining mode
 
-*Sources: [`setup.sh`](../setup.sh) (lines 9-41)*
+*Source: [`setup.sh`](../setup.sh)*
 
 ### Directory Structure After Setup
 
@@ -61,7 +61,7 @@ ttv-pipeline/
 └── pipeline_config.yaml             # Your configuration file
 ```
 
-*Sources: [`setup.sh`](../setup.sh) (lines 22-26, 37, 41)*
+*Source: [`setup.sh`](../setup.sh)*
 
 ## Configuration
 
@@ -69,7 +69,7 @@ The pipeline is configured through `pipeline_config.yaml`, which you must create
 
 ### Configuration Structure
 
-*Source: [`pipeline_config.yaml.sample`](../pipeline_config.yaml.sample) (lines 1-142)*
+*Source: [`pipeline_config.yaml.sample`](../pipeline_config.yaml.sample)*
 
 ### Initial Configuration
 
@@ -78,7 +78,7 @@ The pipeline is configured through `pipeline_config.yaml`, which you must create
    cp pipeline_config.yaml.sample pipeline_config.yaml
    ```
 
-2. **Set your backend preference** by editing `default_backend` ([`pipeline_config.yaml.sample:21`](../pipeline_config.yaml.sample)):
+2. **Set your backend preference** by editing `default_backend`:
    - `wan2.1` - Local GPU generation using downloaded models
    - `veo3` - Google Veo 3 API (requires GCP setup)
    - `runway` - Runway ML API (requires API key)
@@ -86,28 +86,28 @@ The pipeline is configured through `pipeline_config.yaml`, which you must create
    - `auto` - Automatic backend selection with fallback
 
 3. **Configure API keys** (for remote backends):
-   - **OpenAI**: Set `openai_api_key` ([`pipeline_config.yaml.sample:114`](../pipeline_config.yaml.sample))
-   - **Runway ML**: Set `runway_ml.api_key` ([`pipeline_config.yaml.sample:63`](../pipeline_config.yaml.sample))
-   - **Google Veo**: Set `google_veo.project_id` and `credentials_path` ([`pipeline_config.yaml.sample:71-72`](../pipeline_config.yaml.sample))
+   - **OpenAI**: Set `openai_api_key`
+   - **Runway ML**: Set `runway_ml.api_key`
+   - **Google Veo**: Set `google_veo.project_id` and `credentials_path`
    - **Minimax**: Set `minimax.api_key` or environment variable `MINIMAX_API_KEY`
-   - **Stability AI**: Set `stability_api_key` ([`pipeline_config.yaml.sample:108`](../pipeline_config.yaml.sample))
+   - **Stability AI**: Set `stability_api_key`
 
-*Sources: [`pipeline_config.yaml.sample`](../pipeline_config.yaml.sample) (lines 19-21, 62-75, 108-118)*
+*Source: [`pipeline_config.yaml.sample`](../pipeline_config.yaml.sample)*
 
 ### Key Configuration Options
 
 **Generation Mode:**
-- `generation_mode`: Choose `"chaining"` or `"keyframe"` ([`pipeline_config.yaml.sample:24`](../pipeline_config.yaml.sample))
+- `generation_mode`: Choose `"chaining"` or `"keyframe"`
 
 **GPU Settings:**
-- `total_gpus`: Number of GPUs available ([`pipeline_config.yaml.sample:36`](../pipeline_config.yaml.sample))
-- `parallel_segments`: Enable parallel segment processing ([`pipeline_config.yaml.sample:37`](../pipeline_config.yaml.sample))
+- `total_gpus`: Number of GPUs available
+- `parallel_segments`: Enable parallel segment processing
 
 **Generation Parameters:**
-- `segment_duration_seconds`: Duration of each video segment ([`pipeline_config.yaml.sample:125`](../pipeline_config.yaml.sample))
-- `text_to_image_model`: Choose between `"openai/gpt-image-1"` or `"stabilityai/sd3:stable"` ([`pipeline_config.yaml.sample:92`](../pipeline_config.yaml.sample))
+- `segment_duration_seconds`: Duration of each video segment
+- `text_to_image_model`: Choose between `"openai/gpt-image-1"` or `"stabilityai/sd3:stable"`
 
-*Sources: [`pipeline_config.yaml.sample`](../pipeline_config.yaml.sample) (lines 24, 36-37, 92, 125)*
+*Source: [`pipeline_config.yaml.sample`](../pipeline_config.yaml.sample)*
 
 ## Dependencies
 
@@ -130,7 +130,7 @@ The pipeline requires several key Python packages installed via `requirements.tx
 
 ### Basic Usage Pattern
 
-*Source: [`setup.sh:67`](../setup.sh)*
+*Source: [`setup.sh`](../setup.sh)*
 
 Activate the virtual environment and run the pipeline:
 

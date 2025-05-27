@@ -21,9 +21,75 @@ The remote API generators implement the `VideoGeneratorInterface` to provide vid
 - **Asynchronous Processing**: Polling-based completion monitoring
 - **Fallback Support**: Automatic switching between API providers
 
-*Sources: [`generators/remote/__init__.py`](../generators/remote/__init__.py) (lines 1-9), [`generators/remote/runway_generator.py`](../generators/remote/runway_generator.py) (lines 1-30), [`generators/remote/veo3_generator.py`](../generators/remote/veo3_generator.py) (lines 1-56), [`generators/remote/minimax_generator.py`](../generators/remote/minimax_generator.py) (lines 1-56)*
+*Sources: [`generators/remote/__init__.py`](../generators/remote/__init__.py), [`generators/remote/runway_generator.py`](../generators/remote/runway_generator.py), [`generators/remote/veo3_generator.py`](../generators/remote/veo3_generator.py), [`generators/remote/minimax_generator.py`](../generators/remote/minimax_generator.py)*
 
 ## Architecture Overview
+
+### Remote Generator Architecture
+
+```mermaid
+graph TD
+    subgraph Configuration
+        config[pipeline_config.yaml] --> api_creds[API Credentials]
+        config --> gcs_settings[GCS Bucket Settings]
+    end
+
+    subgraph Common Components
+        retry[RetryHandler]
+        progress[ProgressMonitor]
+        validator[ImageValidator]
+        downloader[download_file]
+    end
+
+    subgraph Interface
+        vgi[VideoGeneratorInterface]
+    end
+
+    subgraph RunwayML Implementation
+        runway_gen[RunwayMLGenerator]
+        runway_client[RunwayML]
+        runway_api[Runway ML API]
+        runway_gen --> runway_client --> runway_api
+    end
+
+    subgraph Veo3 Implementation
+        veo3_gen[Veo3Generator]
+        genai_client[genai.Client]
+        storage_client[storage.Client]
+        google_api[Google Veo 3 API]
+        gcs[Google Cloud Storage]
+        veo3_gen --> genai_client --> google_api
+        veo3_gen --> storage_client --> gcs
+    end
+
+    subgraph Minimax Implementation
+        minimax_gen[MinimaxGenerator]
+        minimax_api[Minimax I2V-01-Director API]
+        minimax_gen --> minimax_api
+    end
+
+    vgi --> runway_gen
+    vgi --> veo3_gen
+    vgi --> minimax_gen
+
+    api_creds --> runway_gen
+    api_creds --> veo3_gen
+    api_creds --> minimax_gen
+    gcs_settings --> veo3_gen
+
+    retry --> runway_gen
+    retry --> veo3_gen
+    retry --> minimax_gen
+    progress --> runway_gen
+    progress --> veo3_gen
+    progress --> minimax_gen
+    validator --> runway_gen
+    validator --> veo3_gen
+    validator --> minimax_gen
+    downloader --> runway_gen
+    downloader --> veo3_gen
+    downloader --> minimax_gen
+```
 
 The remote API generators follow a consistent architectural pattern:
 
@@ -35,7 +101,7 @@ The remote API generators follow a consistent architectural pattern:
 6. **Result Download**: Retrieve and save generated videos
 7. **Cost Tracking**: Calculate and report generation costs
 
-*Sources: [`generators/remote/runway_generator.py`](../generators/remote/runway_generator.py) (lines 28-66), [`generators/remote/veo3_generator.py`](../generators/remote/veo3_generator.py) (lines 55-88), [`generators/remote/minimax_generator.py`](../generators/remote/minimax_generator.py) (lines 55-88), [`video_generator_interface.py`](../video_generator_interface.py) (lines 12-19)*
+*Sources: [`generators/remote/runway_generator.py`](../generators/remote/runway_generator.py), [`generators/remote/veo3_generator.py`](../generators/remote/veo3_generator.py), [`generators/remote/minimax_generator.py`](../generators/remote/minimax_generator.py), [`video_generator_interface.py`](../video_generator_interface.py)*
 
 ## RunwayML Generator Implementation
 
@@ -49,7 +115,7 @@ The `RunwayMLGenerator` class provides video generation through Runway ML's API,
 - **Model Selection**: Support for multiple generation models
 - **Progress Monitoring**: Real-time generation tracking
 
-*Sources: [`generators/remote/runway_generator.py`](../generators/remote/runway_generator.py) (lines 28-66, 138-206)*
+*Source: [`generators/remote/runway_generator.py`](../generators/remote/runway_generator.py)*
 
 ### API Workflow and Polling
 
@@ -67,7 +133,7 @@ The Runway ML generation process involves creating a task, polling for completio
 - **Maximum Timeout**: Configurable (default: 10 minutes)
 - **Progress Updates**: Real-time status reporting
 
-*Sources: [`generators/remote/runway_generator.py`](../generators/remote/runway_generator.py) (lines 112-136, 207-241)*
+*Source: [`generators/remote/runway_generator.py`](../generators/remote/runway_generator.py)*
 
 ### Supported Models and Capabilities
 
@@ -92,7 +158,7 @@ The generator supports multiple Runway ML models with different pricing tiers:
 - **Input**: Image + text prompt
 - **Output**: MP4 video file
 
-*Sources: [`generators/remote/runway_generator.py`](../generators/remote/runway_generator.py) (lines 31-37, 67-92)*
+*Source: [`generators/remote/runway_generator.py`](../generators/remote/runway_generator.py)*
 
 ## Google Veo 3 Generator Implementation
 
@@ -113,7 +179,7 @@ The `Veo3Generator` integrates with Google's generative AI platform and requires
 4. **Output Download**: Retrieve generated video from GCS
 5. **Cleanup**: Remove temporary files from GCS
 
-*Sources: [`generators/remote/veo3_generator.py`](../generators/remote/veo3_generator.py) (lines 194-304, 323-404)*
+*Source: [`generators/remote/veo3_generator.py`](../generators/remote/veo3_generator.py)*
 
 ### Authentication and Client Initialization
 
@@ -135,7 +201,7 @@ The Veo3 generator requires Google Cloud authentication and multiple client init
 
 The initialization process sets environment variables and loads credentials from either a service account file or application default credentials.
 
-*Sources: [`generators/remote/veo3_generator.py`](../generators/remote/veo3_generator.py) (lines 89-117, 66-88)*
+*Source: [`generators/remote/veo3_generator.py`](../generators/remote/veo3_generator.py)*
 
 ### Veo 3 Capabilities and Constraints
 
@@ -163,7 +229,7 @@ The Veo 3 generator has specific limitations and features:
 
 Input validation ensures images meet aspect ratio requirements and prompts don't exceed 1000 characters.
 
-*Sources: [`generators/remote/veo3_generator.py`](../generators/remote/veo3_generator.py) (lines 119-138, 155-192)*
+*Source: [`generators/remote/veo3_generator.py`](../generators/remote/veo3_generator.py)*
 
 ## Minimax I2V-01-Director Generator Implementation
 

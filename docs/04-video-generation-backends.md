@@ -21,14 +21,60 @@ The video generation backend system implements a layered architecture that separ
 
 ### System Architecture
 
-```
-Core Pipeline
-     ↓
-Factory Layer → VideoGeneratorInterface
-     ↓                    ↓
-Local Generators    Remote API Generators
-     ↓                    ↓
-Wan2.1 Models       Runway ML / Veo3 / Minimax APIs
+```mermaid
+graph TD
+    subgraph "Configuration"
+        config[pipeline_config.yaml]
+        api_cred[API credentials]
+        default[default_backend]
+        fallback[fallback_backend]
+        modes[Generation Modes]
+    end
+    
+    subgraph "Core Pipeline Layer"
+        pipeline[pipeline.py]
+        config --> pipeline
+        modes --> pipeline
+    end
+    
+    subgraph "Abstraction Layer"
+        factory[create_video_generator]
+        pipeline --> factory
+        default --> factory
+        interface[VideoGeneratorInterface]
+        registry[Generator Registry]
+        factory --> interface
+        factory --> registry
+        fallback --> fallback_logic[Fallback Logic]
+        registry --> fallback_logic
+    end
+    
+    subgraph "Implementation Layer"
+        wan2[Wan2Generator]
+        runway[RunwayMLGenerator]
+        veo3[Veo3Generator]
+        minimax[MinimaxGenerator]
+        
+        interface --> wan2
+        interface --> runway
+        interface --> veo3
+        interface --> minimax
+        
+        api_cred --> runway
+        api_cred --> veo3
+        api_cred --> minimax
+    end
+    
+    subgraph "Utilities"
+        retry[RetryHandler]
+        validator[ImageValidator]
+        monitor[ProgressMonitor]
+        
+        wan2 --> retry
+        runway --> retry
+        veo3 --> retry
+        minimax --> retry
+    end
 ```
 
 ### Backend Selection Flow
@@ -60,7 +106,7 @@ The factory pattern is implemented through the `create_video_generator` function
 - **Handling fallback scenarios** when the primary backend fails
 - **Managing API credentials** and initialization parameters
 
-*Sources: [`generators/__init__.py`](../generators/__init__.py) (lines 5-7), [`generators/base.py`](../generators/base.py) (lines 1-3)*
+*Sources: [`generators/__init__.py`](../generators/__init__.py), [`generators/base.py`](../generators/base.py)*
 
 ## Configuration and Backend Selection
 

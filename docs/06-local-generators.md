@@ -29,7 +29,7 @@ The generator handles the complete lifecycle from configuration validation throu
 5. **Process Management**: Execute and monitor generation process
 6. **Output Validation**: Verify successful video generation
 
-*Source: [`generators/local/wan21_generator.py`](../generators/local/wan21_generator.py) (lines 17-237)*
+*Source: [`generators/local/wan21_generator.py`](../generators/local/wan21_generator.py)*
 
 ## Configuration Parameters
 
@@ -57,7 +57,7 @@ The `Wan21Generator` accepts comprehensive configuration through the pipeline co
 
 The generator validates all configuration parameters during initialization and provides detailed error messages for missing or invalid configurations.
 
-*Source: [`generators/local/wan21_generator.py`](../generators/local/wan21_generator.py) (lines 20-36)*
+*Source: [`generators/local/wan21_generator.py`](../generators/local/wan21_generator.py)*
 
 ## Command Generation and Execution
 
@@ -75,26 +75,39 @@ The command builder dynamically constructs execution commands based on GPU confi
 
 **Single-GPU Command:**
 ```bash
-python -m frameworks.Wan2.1.wan.tasks.i2v-14B \
-    --checkpoint_dir ./models/Wan2.1-I2V-14B-720P \
-    --input_image input.jpg \
-    --output_path output.mp4 \
-    --guide_scale 7.5 \
-    --sample_steps 50
+python generate.py \
+    --save_file output.mp4 \
+    --task i2v-14B \
+    --size 1280*720 \
+    --ckpt_dir ./models/Wan2.1-I2V-14B-720P \
+    --image input.jpg \
+    --prompt "A beautiful landscape" \
+    --sample_guide_scale 7.5 \
+    --sample_steps 50 \
+    --sample_shift 5.0 \
+    --frame_num 81
 ```
 
 **Multi-GPU Command:**
 For multi-GPU setups, the generator automatically configures `torchrun` with appropriate process counts and adds FSDP flags for memory-efficient distributed processing:
 
 ```bash
-torchrun --nproc_per_node=2 -m frameworks.Wan2.1.wan.tasks.i2v-14B \
-    --checkpoint_dir ./models/Wan2.1-I2V-14B-720P \
-    --use_fsdp \
-    --input_image input.jpg \
-    --output_path output.mp4
+torchrun --nproc_per_node=2 --rdzv_endpoint=localhost:29500 generate.py \
+    --save_file output.mp4 \
+    --task i2v-14B \
+    --size 1280*720 \
+    --ckpt_dir ./models/Wan2.1-I2V-14B-720P \
+    --image input.jpg \
+    --prompt "A beautiful landscape" \
+    --sample_guide_scale 7.5 \
+    --sample_steps 50 \
+    --sample_shift 5.0 \
+    --frame_num 81 \
+    --ulysses_size 2 \
+    --dit_fsdp --t5_fsdp
 ```
 
-*Sources: [`generators/local/wan21_generator.py`](../generators/local/wan21_generator.py) (lines 140-194, 148-178)*
+*Source: [`generators/local/wan21_generator.py`](../generators/local/wan21_generator.py)*
 
 ## Multi-GPU Support and FSDP
 
@@ -118,7 +131,7 @@ The `Wan21Generator` provides sophisticated multi-GPU support through PyTorch's 
 
 The generator automatically detects available GPU resources and validates that the requested GPU count matches available hardware before attempting distributed execution.
 
-*Sources: [`generators/local/wan21_generator.py`](../generators/local/wan21_generator.py) (lines 149-177, 214-231)*
+*Source: [`generators/local/wan21_generator.py`](../generators/local/wan21_generator.py)*
 
 ## Error Handling and Retry Logic
 
@@ -167,7 +180,7 @@ def _retry_with_reduced_params(self, original_params):
             continue
 ```
 
-*Source: [`generators/local/wan21_generator.py`](../generators/local/wan21_generator.py) (lines 109-138)*
+*Source: [`generators/local/wan21_generator.py`](../generators/local/wan21_generator.py)*
 
 ## Input Validation and Capabilities
 

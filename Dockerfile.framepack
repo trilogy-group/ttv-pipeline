@@ -1,0 +1,15 @@
+# FramePack backend image
+FROM ttv-base:latest
+
+# Clone FramePack into frameworks directory
+RUN git clone https://github.com/lllyasviel/FramePack.git frameworks/FramePack
+
+# Install FramePack requirements
+RUN source .venv/bin/activate && \
+    cd frameworks/FramePack && \
+    uv pip install -r requirements.txt
+
+# Enable FramePack in pipeline configuration
+RUN sed -i 's|# framepack_dir: ./frameworks/FramePack|framepack_dir: ./frameworks/FramePack|' pipeline_config.yaml
+
+CMD ["bash", "-lc", "source .venv/bin/activate && python -m pipeline --config pipeline_config.yaml"]

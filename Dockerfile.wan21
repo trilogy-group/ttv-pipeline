@@ -1,0 +1,15 @@
+# Wan2.1 backend image
+FROM ttv-base:latest
+
+# Clone Wan2.1 into frameworks directory
+RUN git clone https://github.com/Wan-Video/Wan2.1.git frameworks/Wan2.1
+
+# Install Wan2.1 requirements
+RUN source .venv/bin/activate && \
+    cd frameworks/Wan2.1 && \
+    uv pip install -r requirements.txt
+
+# Enable Wan2.1 in pipeline configuration
+RUN sed -i 's|# wan2_dir: ./frameworks/Wan2.1|wan2_dir: ./frameworks/Wan2.1|' pipeline_config.yaml
+
+CMD ["bash", "-lc", "source .venv/bin/activate && python -m pipeline --config pipeline_config.yaml"]

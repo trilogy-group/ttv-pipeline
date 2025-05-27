@@ -16,40 +16,73 @@ For initial setup and installation procedures, see [Getting Started](02-getting-
 
 ## Container Architecture Overview
 
-The TTV Pipeline deployment uses a containerized architecture built on NVIDIA CUDA containers with FramePack integration for web-based video generation interfaces.
+The TTV Pipeline deployment uses a multi-stage containerized architecture built on NVIDIA CUDA containers, with specialized images for different use cases.
+
+### Specialized Dockerfiles
+
+The TTV Pipeline provides separate Dockerfiles for different deployment scenarios:
+
+1. **`Dockerfile.base`**: Base image with common dependencies and TTV Pipeline core
+2. **`Dockerfile.core`**: Minimal deployment for API-only backends (no local GPU models)
+3. **`Dockerfile.framepack`**: Specialized image with FramePack backend
+4. **`Dockerfile.wan21`**: Specialized image with Wan2.1 backend
+
+This approach allows users to build only the specific image they need, without dependencies for unused backends.
 
 **Key Architecture Components:**
-- **Base Layer**: NVIDIA CUDA 12.9.0 with Ubuntu 24.04
-- **Runtime Environment**: Python 3.12 with UV package management
-- **Core Application**: FramePack video generation framework
-- **Web Interface**: Gradio-based web application
-- **GPU Integration**: CUDA-enabled PyTorch for hardware acceleration
+- **Base Layer**: NVIDIA CUDA 12.1.1 with Ubuntu 22.04
+- **Runtime Environment**: Python 3.10 with UV package management
+- **Core Application**: TTV Pipeline with configurable backends
+- **Specialized Backends**: Separate images for each backend (FramePack, Wan2.1)
+- **Web Interface**: Pipeline-driven Gradio interface
+- **GPU Integration**: CUDA 11.8-enabled PyTorch for hardware acceleration
 
 ### Container Architecture
 
-The containerized deployment follows a layered architecture:
+The containerized deployment follows a layered architecture with specialized builds for different use cases:
 
+#### Base Image (`ttv-base`)
 1. **Infrastructure Layer**: NVIDIA CUDA base image with GPU support
-2. **System Layer**: Ubuntu packages and development tools
-3. **Python Environment**: UV-managed virtual environment with dependencies
-4. **Application Layer**: FramePack framework and TTV Pipeline integration
-5. **Interface Layer**: Gradio web interface for user interaction
+2. **System Layer**: Ubuntu packages and development tools (including ffmpeg for video processing)
+3. **Python Environment**: UV-managed virtual environment with CUDA-enabled PyTorch
+4. **Core Application**: TTV Pipeline core functionality
 
-*Source: [`Dockerfile`](../Dockerfile) (lines 1-26)*
+#### Core Image (`ttv-core`)
+Builds on `ttv-base` and adds:
+1. **Configuration**: Minimal pipeline configuration for API-based backends
+2. **Interface Layer**: Pipeline-driven Gradio web interface for user interaction
+
+#### FramePack Image (`ttv-framepack`)
+Builds on `ttv-base` and adds:
+1. **FramePack Backend**: FramePack framework with its dependencies
+2. **Enhanced Configuration**: Pipeline configuration with enabled FramePack backend
+3. **Interface Layer**: Pipeline-driven Gradio web interface for user interaction
+
+#### Wan2.1 Image (`ttv-wan21`)
+Builds on `ttv-base` and adds:
+1. **Wan2.1 Backend**: Wan2.1 framework with its dependencies
+2. **Enhanced Configuration**: Pipeline configuration with enabled Wan2.1 backend
+3. **Interface Layer**: Pipeline-driven Gradio web interface for user interaction
+
+*Source: [`Dockerfile`](../Dockerfile)*
 
 ### Deployment Components Mapping
 
 **File System Layout:**
 ```
 /workspace/
-├── FramePack/           # Cloned FramePack repository
-│   ├── .venv/          # UV-managed virtual environment
-│   ├── requirements.txt # Python dependencies
-│   └── demo_gradio.py  # Web interface application
-└── ttv-pipeline/       # TTV Pipeline integration
+└── ttv-pipeline/              # Cloned TTV Pipeline repository
+    ├── .venv/                # UV-managed virtual environment
+    ├── frameworks/           # External frameworks directory
+    │   ├── FramePack/        # FramePack as a dependency (in ttv-framepack image)
+    │   └── Wan2.1/           # Wan2.1 as a dependency (in ttv-wan21 image)
+    ├── models/               # Model checkpoints directory
+    ├── outputs/              # Generated outputs directory
+    ├── pipeline_config.yaml  # Pipeline configuration
+    └── requirements.txt      # Python dependencies
 ```
 
-*Source: [`Dockerfile`](../Dockerfile) (lines 1-26)*
+*Source: [`Dockerfile`](../Dockerfile)*
 
 ## Docker Configuration
 
@@ -59,16 +92,16 @@ The container deployment uses NVIDIA CUDA as the foundation to support GPU-accel
 
 **Base Configuration:**
 ```dockerfile
-FROM nvidia/cuda:12.9.0-devel-ubuntu24.04
+FROM nvidia/cuda:12.1.1-devel-ubuntu22.04
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PATH="/root/.local/bin:${PATH}"
 ```
 
 **Key Environment Features:**
-- **CUDA Version**: 12.9.0 development environment
-- **OS**: Ubuntu 24.04 LTS
-- **Python Version**: 3.12 (latest stable)
+- **CUDA Version**: 12.1.1 development environment
+- **OS**: Ubuntu 22.04 LTS
+- **Python Version**: 3.10 (stable release)
 - **Non-interactive**: Automated installation without prompts
 
 The base environment setup includes essential system packages and development tools:
@@ -78,8 +111,10 @@ The base environment setup includes essential system packages and development to
 - **`git`**: Version control for repository cloning
 - **`curl`**: HTTP client for downloads
 - **`ca-certificates`**: SSL/TLS certificate management
+- **`ffmpeg`**: Video processing utilities
+- **`libsm6`/`libxext6`**: Required X11 libraries for OpenCV
 
-*Source: [`Dockerfile`](../Dockerfile) (lines 6-8)*
+*Source: [`Dockerfile`](../Dockerfile)*
 
 ### Package Management Strategy
 
@@ -94,9 +129,10 @@ RUN curl -LsSf https://astral.sh/uv/install.sh -o /uv-installer.sh && \
 
 **Environment Setup:**
 ```dockerfile
-RUN uv venv --python 3.12 && \
-    uv pip install torch torchvision torchaudio && \
-    uv pip install -r requirements.txt
+RUN uv venv --python 3.10 && \
+    uv pip install torch==2.0.1 torchvision==0.15.2 torchaudio==2.0.2 --index-url https://download.pytorch.org/whl/cu118 && \
+    uv pip install -r requirements.txt && \
+    uv pip install gradio
 ```
 
 **UV Benefits:**
@@ -126,7 +162,7 @@ WORKDIR /workspace/FramePack
 - **Model Support**: Multiple video generation models
 - **GPU Acceleration**: CUDA-optimized processing
 
-*Source: [`Dockerfile`](../Dockerfile) (lines 17-18)*
+*Source: [`Dockerfile`](../Dockerfile)*
 
 ### Dependencies and Environment
 
@@ -138,19 +174,23 @@ The FramePack environment includes:
 - **Virtual Environment**: Isolated Python environment using UV
 
 **Dependency Management:**
+- **Gradio**: Web interface framework
+- **FFmpeg**: Video processing and concatenation
+- **NumPy/PIL/OpenCV**: Image and video processing libraries
+
+*Source: [`Dockerfile`](../Dockerfile)*
+
+## TTV Pipeline Configuration
+
+The Dockerfile sets up the pipeline configuration with proper paths for the FramePack integration:
+
 ```dockerfile
-uv pip install torch torchvision torchaudio
-uv pip install -r requirements.txt
+# Set up pipeline configuration
+COPY pipeline_config.yaml.sample pipeline_config.yaml
+RUN sed -i 's|# framepack_dir: ./frameworks/FramePack|framepack_dir: ./frameworks/FramePack|' pipeline_config.yaml
 ```
 
-**Key Dependencies:**
-- **PyTorch**: GPU-accelerated tensor computing
-- **TorchVision**: Computer vision utilities
-- **TorchAudio**: Audio processing capabilities
-- **Gradio**: Web interface framework
-- **NumPy/PIL**: Image processing libraries
-
-*Source: [`Dockerfile`](../Dockerfile) (lines 15-22)*
+This configuration enables the TTV Pipeline to properly locate and utilize FramePack for video generation.
 
 ## Container Deployment Process
 
@@ -162,7 +202,7 @@ The container exposes a web interface for video generation through Gradio:
 ```dockerfile
 EXPOSE 7860
 
-CMD ["bash", "-lc", "source $HOME/.local/bin/env && source .venv/bin/activate && python demo_gradio.py --server 0.0.0.0 --port 7860 --share"]
+CMD ["bash", "-lc", "source .venv/bin/activate && python -m pipeline --config pipeline_config.yaml"]
 ```
 
 **Runtime Parameters:**
@@ -192,13 +232,12 @@ bash -lc "source $HOME/.local/bin/env && source .venv/bin/activate && python dem
 
 ### Port Exposure and Access
 
-The container configuration enables web-based access to the video generation system:
+The TTV Pipeline with Gradio integration provides a simple, interactive way to interact with the video generation system:
 
 **Network Configuration:**
 - **Internal Port**: `7860` - Gradio application port
 - **Binding**: `0.0.0.0` - Listen on all network interfaces  
 - **Share Mode**: Enabled for external access
-- **Protocol**: HTTP web interface
 
 **Docker Run Example:**
 ```bash
@@ -221,7 +260,7 @@ The Gradio server provides both local and shared access to the video generation 
 - **Result Download**: Generated video download
 - **Parameter Control**: Interactive generation controls
 
-*Source: [`Dockerfile`](../Dockerfile) (lines 24-26)*
+*Source: [`Dockerfile`](../Dockerfile)*
 
 ## GPU and Resource Requirements
 
@@ -262,36 +301,69 @@ docker run --gpus all -p 7860:7860 ttv-pipeline:latest
 - **CPU**: 16+ core processor
 - **RAM**: 32GB+ system memory
 
-*Source: [`Dockerfile`](../Dockerfile) (lines 1-26)*
+*Source: [`Dockerfile`](../Dockerfile)*
 
 ## Deployment Commands
 
 ### Building the Container
 
-```bash
-# Build the Docker image
-docker build -t ttv-pipeline:latest .
+The multi-stage Dockerfile allows building different images for specific use cases:
 
-# Build with custom tag
-docker build -t ttv-pipeline:v1.0 .
+```bash
+# First build the base image
+docker build -f Dockerfile.base -t ttv-base:latest .
+
+# Build the minimal core image (API backends only)
+docker build -f Dockerfile.core -t ttv-pipeline:core .
+
+# Build the FramePack image
+docker build -f Dockerfile.framepack -t ttv-pipeline:framepack .
+
+# Build the Wan2.1 image
+docker build -f Dockerfile.wan21 -t ttv-pipeline:wan21 .
 ```
 
-### Running the Container
+### Running the Core Container (API-only)
 
 ```bash
-# Basic run with GPU support
-docker run --gpus all -p 7860:7860 ttv-pipeline:latest
-
-# Run with volume mounting for persistent storage
+# Run the core image (small, no local backends)
 docker run --gpus all -p 7860:7860 \
-  -v /local/models:/workspace/models \
-  ttv-pipeline:latest
+  -e RUNWAY_API_KEY=your_api_key \
+  -e MINIMAX_API_KEY=your_api_key \
+  ttv-pipeline:core
+```
 
-# Run with environment variables
+### Running the FramePack Container
+
+```bash
+# Run the FramePack image with model volume mounts
 docker run --gpus all -p 7860:7860 \
   -e CUDA_VISIBLE_DEVICES=0,1 \
-  ttv-pipeline:latest
+  -v /path/to/models:/workspace/ttv-pipeline/models \
+  -v /path/to/outputs:/workspace/ttv-pipeline/outputs \
+  ttv-pipeline:framepack
 ```
+
+### Running the Wan2.1 Container
+
+```bash
+# Run the Wan2.1 image with model volume mounts
+docker run --gpus all -p 7860:7860 \
+  -e CUDA_VISIBLE_DEVICES=0,1 \
+  -v /path/to/models:/workspace/ttv-pipeline/models \
+  -v /path/to/outputs:/workspace/ttv-pipeline/outputs \
+  ttv-pipeline:wan21
+```
+
+### Volume Mounts and Environment Variables
+
+**Essential Volume Mounts:**
+- **Models**: `-v /path/to/models:/workspace/ttv-pipeline/models` - Store large model files outside container
+- **Outputs**: `-v /path/to/outputs:/workspace/ttv-pipeline/outputs` - Persist generated videos
+
+**Common Environment Variables:**
+- **GPU Selection**: `-e CUDA_VISIBLE_DEVICES=0,1` - Control which GPUs are used
+- **API Keys**: `-e RUNWAY_API_KEY=xxx -e MINIMAX_API_KEY=xxx` - Remote API credentials
 
 ### Development Mode
 

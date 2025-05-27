@@ -1,0 +1,6 @@
+# Core image for API-only backends
+FROM ttv-base:latest
+
+# No additional setup needed as the base image already has the core TTV pipeline
+
+CMD ["bash", "-lc", "source .venv/bin/activate && python -m pipeline --config pipeline_config.yaml"]

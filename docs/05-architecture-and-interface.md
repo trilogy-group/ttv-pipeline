@@ -23,7 +23,7 @@ The core interface defines five essential methods that every backend must implem
 - **`validate_inputs()`** → `List[str]`: Validates input parameters and returns error list
 - **`is_available()`** → `bool`: Checks if backend is available for use
 
-*Source: [`video_generator_interface.py`](../video_generator_interface.py) (lines 13-122)*
+*Source: [`video_generator_interface.py`](../video_generator_interface.py)*
 
 ### Exception Hierarchy
 
@@ -36,7 +36,7 @@ The interface defines a comprehensive exception hierarchy for handling different
 - **`QuotaExceededError`**: API quota or rate limits exceeded
 - **`ModelNotFoundError`**: Required model files or versions not found
 
-*Source: [`video_generator_interface.py`](../video_generator_interface.py) (lines 124-150)*
+*Source: [`video_generator_interface.py`](../video_generator_interface.py)*
 
 ## Factory Pattern Implementation
 
@@ -62,7 +62,7 @@ GENERATOR_REGISTRY = {
 4. **Availability Check**: Verify backend is available for use
 5. **Fallback Handling**: Try alternative backends if primary fails
 
-*Sources: [`generators/factory.py`](../generators/factory.py) (lines 18-23, 26-125)*
+*Source: [`generators/factory.py`](../generators/factory.py)*
 
 ### Configuration Extraction
 
@@ -83,7 +83,7 @@ The factory handles backend-specific configuration extraction, mapping general c
 - `google_veo.credentials_path`: Path to GCP credentials
 - `google_veo.region`: GCP region for processing
 
-*Source: [`generators/factory.py`](../generators/factory.py) (lines 55-109)*
+*Source: [`generators/factory.py`](../generators/factory.py)*
 
 ## Backend Registration and Selection
 
@@ -117,6 +117,41 @@ The system implements intelligent fallback when backends fail:
 ### Backend-Specific Configuration Mapping
 
 Each backend requires different configuration parameters, which the factory extracts and maps appropriately:
+
+```mermaid
+graph LR
+    config[pipeline_config.yaml] --> factory[create_video_generator]
+    factory --> selector{Backend Type}
+    
+    selector --> wan2[wan2.1 Config]
+    selector --> runway[runway Config]
+    selector --> veo3[veo3 Config]
+    selector --> minimax[minimax Config]
+    
+    %% Wan2.1 Configuration
+    wan2 --> wan2_dir[wan2_dir]
+    wan2 --> i2v_model_dir[i2v_model_dir]
+    wan2 --> total_gpus[total_gpus]
+    wan2 --> sample_steps[sample_steps]
+    
+    %% Runway Configuration
+    runway --> api_key[api_key]
+    runway --> model_version[model_version]
+    runway --> max_duration[max_duration]
+    runway --> motion_amount[motion_amount]
+    
+    %% Veo3 Configuration
+    veo3 --> project_id[project_id]
+    veo3 --> credentials_path[credentials_path]
+    veo3 --> region[region]
+    veo3 --> output_bucket[output_bucket]
+    
+    %% Minimax Configuration
+    minimax --> minimax_api_key[api_key]
+    minimax --> minimax_model[model]
+    minimax --> minimax_resolution[resolution]
+    minimax --> minimax_max_duration[max_duration]
+```
 
 **Configuration Mapping Logic:**
 - **Parameter Filtering**: Only pass relevant config to each backend
@@ -181,12 +216,29 @@ def is_available(self) -> bool:
 
 ### Exception Propagation
 
-The interface standardizes exception handling across all backends:
+The interface standardizes exception handling across all backends through a consistent exception flow:
 
-1. **Catch Backend Errors**: Wrap backend-specific exceptions
-2. **Classify Failures**: Map to standard exception hierarchy
-3. **Preserve Context**: Maintain original error information
-4. **Enable Retry Logic**: Support intelligent retry mechanisms
+```mermaid
+sequenceDiagram
+    participant Factory
+    participant Generator
+    participant ExceptionHandler
+    participant Pipeline
+    
+    Factory->>Generator: Create generator instance
+    Generator-->>Factory: Exception raised
+    Factory->>ExceptionHandler: Catch and wrap exception
+    ExceptionHandler->>Factory: VideoGenerationError
+    Factory->>Factory: Log error details
+    ExceptionHandler-->>Pipeline: Propagate VideoGenerationError
+```
+
+This standardized approach ensures consistent error handling:
+
+1. **Catch Backend Errors**: Backend-specific exceptions are caught and wrapped
+2. **Classify Failures**: Errors are mapped to the standard exception hierarchy
+3. **Preserve Context**: Original error information is maintained in the exception chain
+4. **Enable Retry Logic**: Structured exceptions support intelligent retry mechanisms
 
 ## Implementation Examples
 
