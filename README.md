@@ -24,13 +24,13 @@ This pipeline solves these problems by:
 
 The pipeline now supports remote video generation APIs, making high-quality video generation accessible without expensive GPU hardware:
 
-- ** Runway ML**: Successfully integrated Gen-4 Turbo models via API with full support for image-to-video generation
-- ** Google Veo 3**: State-of-the-art video generation via Google Cloud (initial implementation ready for final testing once allowlisted)
-- ** Minimax**: Cost-effective I2V-01-Director model with advanced camera movement controls and 6-second generation capability
-- ** Seamless Integration**: Switch between local (Wan2.1) and cloud generation, or set a preferred default and fallback, all through `pipeline_config.yaml`
-- ** Cost Effective**: Pay-per-use model for cloud APIs can be more economical than GPU rental for some use cases
-- ** Environment Variable Security**: API keys are securely managed through environment variables
-- ** Comprehensive Generator Architecture**: Extensible factory pattern with automatic fallback support
+- **Runway ML**: Successfully integrated Gen-4 Turbo models via API with full support for image-to-video generation
+- **Google Veo 3**: State-of-the-art video generation via Google Cloud (initial implementation ready for final testing once allowlisted)
+- **Minimax**: Cost-effective I2V-01-Director model with advanced camera movement controls and 6-second generation capability
+- **Seamless Integration**: Switch between local (Wan2.1) and cloud generation, or set a preferred default and fallback, all through `pipeline_config.yaml`
+- **Cost Effective**: Pay-per-use model for cloud APIs can be more economical than GPU rental for some use cases
+- **Environment Variable Security**: API keys are securely managed through environment variables
+- **Comprehensive Generator Architecture**: Extensible factory pattern with automatic fallback support
 
 See the "Configuration" section for details on setting up different backends.
 
