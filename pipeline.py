@@ -903,14 +903,14 @@ def generate_video_chaining_mode(
                         )
                     else:
                         # Try ImageRouter
-                        if config.get("imageRouter_api_key"):
+                        if config.get("image_router_api_key"):
                             logging.info(f"Generating initial frame with ImageRouter using model {text_to_image_model}")
                             from keyframe_generator import generate_keyframe_with_imageRouter
                             generate_keyframe_with_imageRouter(
                                 prompt=initial_frame_prompt,
                                 output_path=input_image,
                                 model_name=text_to_image_model,
-                                imageRouter_api_key=config.get("imageRouter_api_key")
+                                imageRouter_api_key=config.get("image_router_api_key")
                             )
                         else:
                             logging.error(f"No API key provided for model {text_to_image_model}")
