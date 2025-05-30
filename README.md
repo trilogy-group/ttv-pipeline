@@ -122,12 +122,13 @@ All pipeline behavior is controlled through `pipeline_config.yaml`. Copy `pipeli
     *   `task`, `size`, `prompt`: Core details for your video.
 
 2.  **Backend Selection**:
-    *   `default_backend`: Specify your preferred video generation backend (e.g., "wan2.1", "runway", "veo3", "minimax"). The system will attempt to use this backend first.
+    *   `default_backend`: Specify your preferred video generation backend (e.g., "wan2.1", "hunyuan", "runway", "veo3", "minimax"). The system will attempt to use this backend first.
 
 3.  **Local Backend Configuration (Wan2.1)**:
     *   `wan2_dir`, `flf2v_model_dir`, `i2v_model_dir`: Paths for the local Wan2.1 setup.
     *   `total_gpus`, `parallel_segments`, `gpu_count`: GPU settings for local generation. `parallel_segments` is only supported in keyframe mode (chaining mode requires sequential processing). See "GPU Parallelization (for Local Wan2.1 Backend)" below.
     *   `chaining_max_retries`, `chaining_use_fsdp_flags`: Specific to Wan2.1 chaining mode.
+    *   `hunyuan_video`: Paths for the HunyuanVideo generator (`hunyuan_dir`, `config_file`, `ckpt_path`).
 
 4.  **Remote Backend Configuration**:
     *   `runway_ml`: Settings for Runway ML, including `api_key`, `model_version`, etc.
@@ -276,7 +277,12 @@ The pipeline handles dimensions in the following ways:
   - Stability AI: Fixed 1024x1024 square format.
   - OpenAI: 1536x1024 (landscape) or 1024x1536 (portrait).
 
+
 Note: Some visual inconsistency may occur between the initial image and generated keyframes due to dimension differences.
+
+## HunyuanVideo Integration
+
+You can also use Tencent's [HunyuanVideo](https://github.com/Tencent-Hunyuan/HunyuanVideo) model for local generation. Clone the repository and set the `hunyuan_video` paths in `pipeline_config.yaml`.
 
 ## FramePack Integration (Optional Local Generator)
 

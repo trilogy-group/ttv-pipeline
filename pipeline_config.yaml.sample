@@ -32,6 +32,14 @@ wan2_dir: ./Wan2.1                              # Path to Wan2.1 framework code
 flf2v_model_dir: ./models/Wan2.1-FLF2V-14B-720P # Path to the FLF2V model weights (for keyframe mode)
 i2v_model_dir: ./models/Wan2.1-I2V-14B-720P     # Path to the I2V model weights (for chaining mode)
 
+# Local HunyuanVideo configuration
+hunyuan_video:
+  hunyuan_dir: ./frameworks/HunyuanVideo          # Path to HunyuanVideo repository
+  config_file: ./frameworks/HunyuanVideo/configs/inference_v1.yaml
+  ckpt_path: ./models/HunyuanVideo/weights.pt
+  max_duration: 5
+  sample_steps: 50
+
 # GPU settings for local generation
 total_gpus: 1        # Total number of GPUs available in the system
 parallel_segments: 1 # Number of segments to generate in parallel

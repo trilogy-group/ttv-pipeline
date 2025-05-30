@@ -21,10 +21,12 @@ graph TD
     F --> G
     G --> H[VideoGeneratorInterface]
     H --> I[Wan21Generator]
+    H --> HN[HunyuanVideoGenerator]
     H --> J[RunwayMLGenerator]
     H --> K[Veo3Generator]
     H --> L[MinimaxGenerator]
     I --> M[Local GPU Processing]
+    HN --> M
     J --> N[Runway ML API]
     K --> O[Google Veo 3 API]
     L --> P[Minimax API]
@@ -125,13 +127,14 @@ The entire system behavior is controlled through a comprehensive YAML configurat
 ### Key Configuration Parameters
 
 **Backend Selection:**
-- `default_backend`: Choose from `"wan2.1"`, `"runway"`, `"veo3"`, `"minimax"` - [`generators/factory.py`](../generators/factory.py)
+- `default_backend`: Choose from `"wan2.1"`, `"hunyuan"`, `"runway"`, `"veo3"`, `"minimax"` - [`generators/factory.py`](../generators/factory.py)
 
 **Backend-Specific Settings:**
 - `wan2_dir`: Local Wan2.1 setup - [`generators/local/wan21_generator.py`](../generators/local/wan21_generator.py)
 - `runway_ml`: Runway API configuration - [`generators/remote/runway_generator.py`](../generators/remote/runway_generator.py)
 - `google_veo`: Veo3 API configuration - [`generators/remote/veo3_generator.py`](../generators/remote/veo3_generator.py)
 - `minimax`: Minimax API configuration - [`generators/remote/minimax_generator.py`](../generators/remote/minimax_generator.py)
+- `hunyuan_video`: Local HunyuanVideo configuration - [`generators/local/hunyuan_video_generator.py`](../generators/local/hunyuan_video_generator.py)
 
 **Generation Control:**
 - `generation_mode`: Choose `"keyframe"` or `"chaining"`
