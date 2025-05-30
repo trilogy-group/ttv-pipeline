@@ -240,8 +240,8 @@ if [ "$SETUP_DOCKER" = true ]; then
   
   # Build backend-specific images if the backends are set up
   if [ "$SETUP_HUNYUAN" = true ]; then
-    echo "Building HunyuanVideo image (ttv-pipeline:framepack)..."
-    docker build -f Dockerfile.framepack -t ttv-pipeline:framepack .
+    echo "Building HunyuanVideo image (ttv-pipeline:hunyuan)..."
+    docker build -f Dockerfile.hunyuan -t ttv-pipeline:hunyuan .
   fi
   
   if [ "$SETUP_WAN21" = true ]; then
@@ -255,7 +255,7 @@ if [ "$SETUP_DOCKER" = true ]; then
   echo ""
   echo "Run container examples:"
   echo "  - Core API: docker run --gpus all -p 7860:7860 -e RUNWAY_API_KEY=your_key ttv-pipeline:core"
-  echo "  - HunyuanVideo: docker run --gpus all -p 7860:7860 -v /path/to/models:/workspace/ttv-pipeline/models ttv-pipeline:framepack"
+  echo "  - HunyuanVideo: docker run --gpus all -p 7860:7860 -v /path/to/models:/workspace/ttv-pipeline/models ttv-pipeline:hunyuan"
   echo "  - Wan2.1: docker run --gpus all -p 7860:7860 -v /path/to/models:/workspace/ttv-pipeline/models ttv-pipeline:wan21"
   echo ""
 fi
