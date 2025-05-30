@@ -8,6 +8,7 @@ from video_generator_interface import VideoGeneratorInterface, VideoGenerationEr
 
 # Import local generators
 from generators.local.wan21_generator import Wan21Generator
+from generators.local.hunyuan_video_generator import HunyuanVideoGenerator
 
 # Import remote generators
 from generators.remote.runway_generator import RunwayMLGenerator
@@ -19,6 +20,7 @@ logger = logging.getLogger(__name__)
 # Registry of available generators
 GENERATOR_REGISTRY = {
     "wan2.1": Wan21Generator,
+    "hunyuan": HunyuanVideoGenerator,
     "runway": RunwayMLGenerator,
     "veo3": Veo3Generator,
     "minimax": MinimaxGenerator,
@@ -70,7 +72,24 @@ def create_video_generator(backend: str, config: Dict[str, Any]) -> VideoGenerat
                 "chaining_max_retries": config.get("chaining_max_retries", 3),
                 "chaining_use_fsdp_flags": config.get("chaining_use_fsdp_flags", True),
             }
-            
+
+        elif backend == "hunyuan":
+            # Local HunyuanVideo configuration
+            hunyuan_config = config.get("hunyuan_video", {})
+            backend_config = {
+                "hunyuan_dir": hunyuan_config.get("hunyuan_dir", "./HunyuanVideo"),
+                "config_file": hunyuan_config.get("config_file"),
+                "ckpt_path": hunyuan_config.get("ckpt_path"),
+                "max_duration": hunyuan_config.get("max_duration", 5),
+                "sample_steps": hunyuan_config.get("sample_steps", 50),
+                "seed": hunyuan_config.get("seed"),
+            }
+
+            if not backend_config["config_file"] or not backend_config["ckpt_path"]:
+                raise VideoGenerationError(
+                    "HunyuanVideo requires 'config_file' and 'ckpt_path'"
+                )
+
         elif backend == "runway":
             # Runway ML configuration
             runway_config = config.get("runway_ml", {})
