@@ -1,0 +1,15 @@
+# HunyuanVideo backend image
+FROM ttv-base:latest
+
+# Clone HunyuanVideo into frameworks directory
+RUN git clone https://github.com/Tencent-Hunyuan/HunyuanVideo.git frameworks/HunyuanVideo
+
+# Install HunyuanVideo requirements
+RUN source .venv/bin/activate && \
+    cd frameworks/HunyuanVideo && \
+    uv pip install -r requirements.txt
+
+# Enable HunyuanVideo in pipeline configuration
+RUN sed -i 's|# hunyuan_dir: ./frameworks/HunyuanVideo|hunyuan_video:\n  hunyuan_dir: ./frameworks/HunyuanVideo|' pipeline_config.yaml
+
+CMD ["bash", "-lc", "source .venv/bin/activate && python -m pipeline --config pipeline_config.yaml"]

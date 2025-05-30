@@ -8,7 +8,7 @@ set -e  # Exit on error
 # Default configuration
 SETUP_ENV=true
 SETUP_WAN21=false
-SETUP_FRAMEPACK=false
+SETUP_HUNYUAN=false
 SETUP_DOCKER=false
 SETUP_REMOTE_APIS=false
 
@@ -21,7 +21,7 @@ show_help() {
   echo "  --all                  Setup everything (Python env, all backends, Docker)"
   echo "  --env-only             Setup only Python environment (default)"
   echo "  --wan21                Setup Wan2.1 backend and models"
-  echo "  --framepack            Setup FramePack backend and models"
+  echo "  --hunyuan              Setup HunyuanVideo backend and models"
   echo "  --docker               Build Docker images"
   echo "  --remote-apis          Setup configuration for remote APIs"
   echo "  --help                 Show this help message"
@@ -32,26 +32,27 @@ show_help() {
 }
 
 # Parse command line arguments
+ARG_COUNT=$#
 while [ "$1" != "" ]; do
   case $1 in
     --all )
       SETUP_WAN21=true
-      SETUP_FRAMEPACK=true
+      SETUP_HUNYUAN=true
       SETUP_DOCKER=true
       SETUP_REMOTE_APIS=true
       ;;
     --env-only )
       SETUP_ENV=true
       SETUP_WAN21=false
-      SETUP_FRAMEPACK=false
+      SETUP_HUNYUAN=false
       SETUP_DOCKER=false
       SETUP_REMOTE_APIS=false
       ;;
     --wan21 )
       SETUP_WAN21=true
       ;;
-    --framepack )
-      SETUP_FRAMEPACK=true
+    --hunyuan )
+      SETUP_HUNYUAN=true
       ;;
     --docker )
       SETUP_DOCKER=true
@@ -69,6 +70,26 @@ while [ "$1" != "" ]; do
   esac
   shift
 done
+
+# Interactive prompt if no arguments were supplied
+if [ $ARG_COUNT -eq 0 ]; then
+  echo "Choose setup option:"
+  echo "  1) API generators only (remote)"
+  echo "  2) Include Wan2.1 local generator"
+  echo "  3) Include HunyuanVideo local generator"
+  read -p "Selection [1-3]: " USER_CHOICE
+  case $USER_CHOICE in
+    2)
+      SETUP_WAN21=true
+      ;;
+    3)
+      SETUP_HUNYUAN=true
+      ;;
+    *)
+      SETUP_REMOTE_APIS=true
+      ;;
+  esac
+fi
 
 echo "Setting up TTV Pipeline environment..."
 
@@ -99,9 +120,34 @@ if [ "$SETUP_ENV" = true ]; then
   
   # Install uv for faster package installation
   pip install uv
-  
-  # Install dependencies with optimized settings
-  echo "Installing dependencies..."
+
+  # Clone and install generator dependencies first
+  if [ "$SETUP_WAN21" = true ]; then
+    if [ ! -d "./frameworks/Wan2.1" ]; then
+      echo "Cloning Wan2.1 framework..."
+      git clone https://github.com/Wan-Video/Wan2.1.git ./frameworks/Wan2.1
+    else
+      echo "Wan2.1 framework already exists, skipping clone"
+    fi
+    if [ -f "./frameworks/Wan2.1/requirements.txt" ]; then
+      uv pip install -r ./frameworks/Wan2.1/requirements.txt
+    fi
+  fi
+
+  if [ "$SETUP_HUNYUAN" = true ]; then
+    if [ ! -d "./frameworks/HunyuanVideo" ]; then
+      echo "Cloning HunyuanVideo repository..."
+      git clone https://github.com/Tencent-Hunyuan/HunyuanVideo.git ./frameworks/HunyuanVideo
+    else
+      echo "HunyuanVideo repository already exists, skipping clone"
+    fi
+    if [ -f "./frameworks/HunyuanVideo/requirements.txt" ]; then
+      uv pip install -r ./frameworks/HunyuanVideo/requirements.txt
+    fi
+  fi
+
+  # Install pipeline dependencies after generator deps
+  echo "Installing pipeline dependencies..."
   MAX_JOBS=64 uv pip install flash-attn --no-build-isolation
   uv pip install -r requirements.txt --no-build-isolation
   uv pip install "huggingface_hub[cli]"
@@ -112,14 +158,6 @@ fi
 # Setup Wan2.1 backend
 if [ "$SETUP_WAN21" = true ]; then
   echo "Setting up Wan2.1 backend..."
-  
-  # Clone the Wan2.1 framework repository if it doesn't exist
-  if [ ! -d "./frameworks/Wan2.1" ]; then
-    echo "Cloning Wan2.1 framework..."
-    git clone https://github.com/Wan-Video/Wan2.1.git ./frameworks/Wan2.1
-  else
-    echo "Wan2.1 framework already exists, skipping clone"
-  fi
   
   # Activate environment for model downloads
   source .venv/bin/activate
@@ -146,50 +184,26 @@ if [ "$SETUP_WAN21" = true ]; then
   echo "Wan2.1 backend setup complete"
 fi
 
-# Setup FramePack backend
-if [ "$SETUP_FRAMEPACK" = true ]; then
-  echo "Setting up FramePack framework..."
-  
-  # Clone the FramePack repository if it doesn't exist
-  if [ ! -d "./frameworks/FramePack" ]; then
-    git clone https://github.com/lllyasviel/FramePack.git ./frameworks/FramePack
-  else
-    echo "FramePack framework already exists, skipping clone"
-  fi
-  
-  # Create FramePack download directory
-  mkdir -p ./frameworks/FramePack/hf_download/hub
-  
+# Setup HunyuanVideo backend
+if [ "$SETUP_HUNYUAN" = true ]; then
+  echo "Setting up HunyuanVideo framework..."
+
+
   # Activate environment for model downloads
   source .venv/bin/activate
-  
-  # Download FramePack models if they don't exist
-  if [ ! -d "./frameworks/FramePack/hf_download/hub/models--hunyuanvideo-community--HunyuanVideo" ]; then
-    echo "Downloading FramePack models (this will take some time)..."
-    huggingface-cli download hunyuanvideo-community/HunyuanVideo --local-dir ./frameworks/FramePack/hf_download/hub/models--hunyuanvideo-community--HunyuanVideo
+
+  # Download model weights if they don't exist
+  if [ ! -f "./models/HunyuanVideo/weights.pt" ]; then
+    echo "Downloading HunyuanVideo model weights..."
+    huggingface-cli download hunyuanvideo-community/HunyuanVideo --local-dir ./models/HunyuanVideo
   else
-    echo "HunyuanVideo model already exists, skipping download"
+    echo "HunyuanVideo weights already exist, skipping download"
   fi
-  
-  if [ ! -d "./frameworks/FramePack/hf_download/hub/models--lllyasviel--FramePackI2V_HY" ]; then
-    huggingface-cli download lllyasviel/FramePackI2V_HY --local-dir ./frameworks/FramePack/hf_download/hub/models--lllyasviel--FramePackI2V_HY
-  else
-    echo "FramePackI2V_HY model already exists, skipping download"
-  fi
-  
-  if [ ! -d "./frameworks/FramePack/hf_download/hub/models--lllyasviel--flux_redux_bfl" ]; then
-    huggingface-cli download lllyasviel/flux_redux_bfl --local-dir ./frameworks/FramePack/hf_download/hub/models--lllyasviel--flux_redux_bfl
-  else
-    echo "flux_redux_bfl model already exists, skipping download"
-  fi
-  
-  # Create version file
-  echo "1" > ./frameworks/FramePack/hf_download/hub/version.txt
-  
-  # Update configuration to use FramePack backend
-  sed -i 's|# framepack_dir: ./frameworks/FramePack|framepack_dir: ./frameworks/FramePack|' pipeline_config.yaml
-  
-  echo "FramePack setup complete!"
+
+  # Update configuration to use HunyuanVideo backend
+  sed -i 's|# hunyuan_dir: ./frameworks/HunyuanVideo|hunyuan_dir: ./frameworks/HunyuanVideo|' pipeline_config.yaml 2>/dev/null || true
+
+  echo "HunyuanVideo setup complete!"
 fi
 
 # Setup Remote API backends
@@ -225,9 +239,9 @@ if [ "$SETUP_DOCKER" = true ]; then
   docker build -f Dockerfile.core -t ttv-pipeline:core .
   
   # Build backend-specific images if the backends are set up
-  if [ "$SETUP_FRAMEPACK" = true ]; then
-    echo "Building FramePack image (ttv-pipeline:framepack)..."
-    docker build -f Dockerfile.framepack -t ttv-pipeline:framepack .
+  if [ "$SETUP_HUNYUAN" = true ]; then
+    echo "Building HunyuanVideo image (ttv-pipeline:hunyuan)..."
+    docker build -f Dockerfile.hunyuan -t ttv-pipeline:hunyuan .
   fi
   
   if [ "$SETUP_WAN21" = true ]; then
@@ -241,7 +255,7 @@ if [ "$SETUP_DOCKER" = true ]; then
   echo ""
   echo "Run container examples:"
   echo "  - Core API: docker run --gpus all -p 7860:7860 -e RUNWAY_API_KEY=your_key ttv-pipeline:core"
-  echo "  - FramePack: docker run --gpus all -p 7860:7860 -v /path/to/models:/workspace/ttv-pipeline/models ttv-pipeline:framepack"
+  echo "  - HunyuanVideo: docker run --gpus all -p 7860:7860 -v /path/to/models:/workspace/ttv-pipeline/models ttv-pipeline:hunyuan"
   echo "  - Wan2.1: docker run --gpus all -p 7860:7860 -v /path/to/models:/workspace/ttv-pipeline/models ttv-pipeline:wan21"
   echo ""
 fi
