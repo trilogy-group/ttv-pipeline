@@ -9,6 +9,7 @@ the results into an animated GIF.
 """
 
 import os
+import shutil
 import logging
 
 import tkinter as tk
@@ -115,19 +116,37 @@ class TweenApp:
         os.makedirs(frames_dir, exist_ok=True)
 
         all_images: List[str] = []
+        frame_idx = 0
+
+        # Copy keyframes into the frames directory
+        start_frame = os.path.join(frames_dir, f"frame_{frame_idx:03d}.png")
+        shutil.copy(start, start_frame)
+        all_images.append(start_frame)
+        frame_idx += 1
 
         try:
             self.log_message("Generating prompts for start->middle...")
             prompts = generate_dalle_prompts(start, middle, count, api_key)
             self.log_message(f"Generated {len(prompts)} prompts")
-            images = generate_dalle_images(prompts, frames_dir, api_key)
+            images = generate_dalle_images(prompts, frames_dir, api_key, start_index=frame_idx)
             all_images.extend(images)
+            frame_idx += len(images)
+
+            middle_frame = os.path.join(frames_dir, f"frame_{frame_idx:03d}.png")
+            shutil.copy(middle, middle_frame)
+            all_images.append(middle_frame)
+            frame_idx += 1
 
             self.log_message("Generating prompts for middle->end...")
             prompts = generate_dalle_prompts(middle, end, count, api_key)
             self.log_message(f"Generated {len(prompts)} prompts")
-            images = generate_dalle_images(prompts, frames_dir, api_key)
+            images = generate_dalle_images(prompts, frames_dir, api_key, start_index=frame_idx)
             all_images.extend(images)
+            frame_idx += len(images)
+
+            end_frame = os.path.join(frames_dir, f"frame_{frame_idx:03d}.png")
+            shutil.copy(end, end_frame)
+            all_images.append(end_frame)
 
             gif_path = os.path.join(out_dir, "tween.gif")
             combine_images_to_gif(all_images, gif_path)
