@@ -45,8 +45,9 @@ python dalle_tween_gui.py
 ```
 
 Select your start, middle and end images, choose how many tween frames to
-generate between each pair, and press **Generate**. The frames and resulting
-`tween.gif` will be saved to `./tween_output/`.
+generate between each pair, and press **Generate**. All frames are saved in
+`./tween_output/frames/` and the final animation will be written to
+`./tween_output/tween.gif`.
 
 ## System Architecture
 
