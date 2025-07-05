@@ -45,9 +45,17 @@ python dalle_tween_gui.py
 ```
 
 Select your start, middle and end images, choose how many tween frames to
-generate between each pair, and press **Generate**. All frames are saved in
-`./tween_output/frames/` and the final animation will be written to
-`./tween_output/tween.gif`.
+generate between each pair, and press **Generate**. The selected keyframes are
+copied into the frames directory and inserted unchanged at the beginning,
+middle and end of the animation. DALL·E only creates the in-between frames.
+Each tween prompt instructs the model to match the artistic style and key
+visual elements of the surrounding keyframes for smooth continuity. All frames
+are saved in `./tween_output/frames/` and the final animation will be written
+to `./tween_output/tween.gif`.
+
+For advanced use, `generate_dalle_images` now accepts a `start_index` parameter
+to control the numbering of output frames when generating multiple tween
+segments. This prevents files from being overwritten.
 
 ## System Architecture
 

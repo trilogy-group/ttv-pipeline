@@ -47,8 +47,10 @@ def generate_dalle_prompts(start_image: str, end_image: str, frame_count: int, a
 
     system_message = (
         "You generate concise DALL·E prompts describing a smooth visual "
-        "transition between two images. Number the prompts starting at 1 "
-        "and do not include additional commentary."
+        "transition between two images. Maintain the artistic style, color "
+        "palette and key visual elements from the start and end frames to "
+        "ensure continuity. Number the prompts starting at 1 and do not "
+        "include additional commentary."
     )
     user_content = [
         {
@@ -89,13 +91,20 @@ def generate_dalle_prompts(start_image: str, end_image: str, frame_count: int, a
     return prompts
 
 
-def generate_dalle_images(prompts: List[str], output_dir: str, api_key: str, max_retries: int = 2) -> List[str]:
+def generate_dalle_images(
+    prompts: List[str],
+    output_dir: str,
+    api_key: str,
+    start_index: int = 0,
+    max_retries: int = 2,
+) -> List[str]:
     """Generate images from prompts using DALL·E 3.
 
     Args:
         prompts: List of text prompts to render.
         output_dir: Directory where generated frames will be saved.
         api_key: OpenAI API key.
+        start_index: Starting index for output file numbering.
         max_retries: Number of retries for each API call on failure.
 
     Returns:
@@ -108,7 +117,7 @@ def generate_dalle_images(prompts: List[str], output_dir: str, api_key: str, max
     os.makedirs(output_dir, exist_ok=True)
     saved_paths: List[str] = []
 
-    for idx, prompt in enumerate(prompts):
+    for idx, prompt in enumerate(prompts, start=start_index):
         frame_path = os.path.join(output_dir, f"frame_{idx:03d}.png")
         logger.info("Generating frame %s with DALL·E 3", idx)
 
