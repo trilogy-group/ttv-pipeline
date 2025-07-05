@@ -5,9 +5,7 @@ import logging
 import os
 import time
 from typing import List
-
 from keyframe_generator import reword_prompt_for_safety
-
 from PIL import Image
 from openai import OpenAI
 
@@ -135,6 +133,7 @@ def generate_dalle_images(prompts: List[str], output_dir: str, api_key: str, max
                     max_retries,
                     exc,
                 )
+
                 if retry == max_retries:
                     raise
                 time.sleep(2)
