@@ -5,7 +5,10 @@ import logging
 import os
 import time
 from typing import List
+
 from keyframe_generator import reword_prompt_for_safety
+
+
 from PIL import Image
 from openai import OpenAI
 

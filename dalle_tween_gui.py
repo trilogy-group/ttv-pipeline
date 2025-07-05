@@ -9,6 +9,8 @@ the results into an animated GIF.
 """
 
 import os
+import logging
+
 import tkinter as tk
 from tkinter import filedialog, messagebox, scrolledtext
 from typing import List
@@ -26,6 +28,9 @@ class Colors:
     BOLD = "\033[1m"
     UNDERLINE = "\033[4m"
     RESET = "\033[0m"
+
+logger = logging.getLogger(__name__)
+
 
 from dalle_tween import (
     generate_dalle_prompts,
@@ -88,6 +93,8 @@ class TweenApp:
     # ------------------------------------------------------------------
     def log_message(self, message: str, color: str = Colors.BLUE) -> None:
         """Print and display a message."""
+        logger.info(message)
+
         print(color + message + Colors.RESET)
         self.log.insert(tk.END, message + "\n")
         self.log.see(tk.END)
@@ -131,6 +138,11 @@ class TweenApp:
 
 
 if __name__ == "__main__":
+    logging.basicConfig(
+        level=logging.INFO,
+        format="[%(asctime)s] %(levelname)s: %(message)s",
+    )
+
     root = tk.Tk()
     app = TweenApp(root)
     root.mainloop()
