@@ -35,27 +35,22 @@ The pipeline now supports remote video generation APIs, making high-quality vide
 
 See the "Configuration" section for details on setting up different backends.
 
-### Generating GIFs with DALL·E-3 Tweening
+### Generating Tween Videos with FLF2V
 
-You can create short animations between three keyframes using the included
-`dalle_tween_gui.py` tool. An OpenAI API key is required.
+The `dalle_tween_gui.py` tool can now produce a smooth tween video using the
+Wan2.1 FLF2V model.
 
 ```bash
 python dalle_tween_gui.py
 ```
 
-Select your start, middle and end images, choose how many tween frames to
-generate between each pair, and press **Generate**. The selected keyframes are
-copied into the frames directory and inserted unchanged at the beginning,
-middle and end of the animation. DALL·E only creates the in-between frames.
-Each tween prompt instructs the model to match the artistic style and key
-visual elements of the surrounding keyframes for smooth continuity. All frames
-are saved in `./tween_output/frames/` and the final animation will be written
-to `./tween_output/tween.gif`.
+Select your start, middle and end keyframes and press **Generate**. The
+application calls the FLF2V model twice: once between the first and middle
+frames and again between the middle and last frames. The two 1‑second clips are
+stitched together into `./tween_output/tween.mp4`.
 
-For advanced use, `generate_dalle_images` now accepts a `start_index` parameter
-to control the numbering of output frames when generating multiple tween
-segments. This prevents files from being overwritten.
+Set the `WAN2_DIR` and `FLF2V_MODEL_DIR` environment variables to point to your
+local Wan2.1 installation and model weights before running the tool.
 
 ## System Architecture
 
