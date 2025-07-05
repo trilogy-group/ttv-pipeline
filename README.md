@@ -1,6 +1,7 @@
 # TTV Pipeline
 
 An end-to-end pipeline for generating high-quality long-form videos from text prompts.
+*Note: Full documentation and container resources are now located in the `archived/` directory.*
 
 ## Overview
 
@@ -80,7 +81,6 @@ See the "Configuration" section for details on setting up different backends.
 - `pipeline.py` - Main orchestration script that runs the end-to-end video generation pipeline
 - `keyframe_generator.py` - Handles generation of keyframes using Stability AI or OpenAI API
 - `pipeline_config.yaml.sample` - Comprehensive sample configuration file. Copy to `pipeline_config.yaml` and customize for your API keys, preferred backends (local Wan2.1, Runway, Google Veo, Minimax), generation parameters, and other settings.
-- `setup.sh` - Script to set up the environment and download necessary models for local generation.
 - `requirements.txt` - Python dependencies for the project.
 - `generators/` - Directory containing the video generator abstraction layer, including interfaces and specific backend implementations (local and remote).
 
@@ -176,7 +176,7 @@ Remote backends (Runway, Veo3, Minimax) manage their own scaling and do not use 
 - Python 3.10+ (Not yet tested on Python 3.12 & Cuda 12.9 for Wan2.1 - coming soon!)
 - For Keyframe Generation: Stability AI API or OpenAI gpt-image-1 API key.
 - For Prompt Enhancement: OpenAI API key.
-- For Local Video Generation (Wan2.1): Wan2.1 I2V model (for chaining mode) or FLF2V model (for keyframe mode). Download via `setup.sh`.
+- For Local Video Generation (Wan2.1): Wan2.1 I2V model (for chaining mode) or FLF2V model (for keyframe mode). Advanced users can set these up via `archived/setup.sh`.
 - For Remote Video Generation: API keys for Runway ML, Google Cloud Project with Veo 3 API enabled, and Minimax API.
 - Pydantic & Instructor (for structured output).
 
@@ -195,16 +195,7 @@ Remote backends (Runway, Veo3, Minimax) manage their own scaling and do not use 
    # Configure your default_backend, model paths (if using local), and other parameters.
    ```
 
-3. If using local Wan2.1 generation, run the setup script to download required frameworks and models:
-   ```bash
-   # Make the script executable
-   chmod +x setup.sh
-   
-   # Run the setup script
-   ./setup.sh
-   ```
-   *Note: To also set up FramePack (optional local generator), edit the `setup.sh` script and uncomment the `setup_framepack` function call before running.* 
-   If you are only using remote APIs for video generation, you might not need to run the full `setup.sh` script, but ensure Python dependencies from `requirements.txt` are installed.
+3. (Optional) Set up local Wan2.1 models by running `archived/setup.sh`. This is only required if you plan to generate videos locally; remote API users can skip this step.
 
 ## Usage
 
@@ -283,8 +274,8 @@ Note: Some visual inconsistency may occur between the initial image and generate
 The pipeline includes optional support for FramePack, a powerful frame-to-video model that can be used as an alternative local generator to Wan2.1 FLF2V.
 
 ### Setting up FramePack
-
 1. Edit the `setup.sh` script and uncomment the line that calls `setup_framepack`.
+
 2. Run the setup script again to download FramePack and its models:
    ```bash
    ./setup.sh
