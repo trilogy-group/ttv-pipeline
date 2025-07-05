@@ -13,7 +13,20 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, scrolledtext
 from typing import List
 
-from pipeline import Colors
+
+class Colors:
+    """ANSI color codes for terminal output."""
+
+    GREEN = "\033[92m"
+    BLUE = "\033[94m"
+    YELLOW = "\033[93m"
+    RED = "\033[91m"
+    PURPLE = "\033[95m"
+    CYAN = "\033[96m"
+    BOLD = "\033[1m"
+    UNDERLINE = "\033[4m"
+    RESET = "\033[0m"
+
 from dalle_tween import (
     generate_dalle_prompts,
     generate_dalle_images,
