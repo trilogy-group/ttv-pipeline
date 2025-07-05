@@ -5,7 +5,7 @@ import logging
 import os
 import time
 from typing import List
-
+from keyframe_generator import reword_prompt_for_safety
 from PIL import Image
 from openai import OpenAI
 
@@ -111,15 +111,29 @@ def generate_dalle_images(prompts: List[str], output_dir: str, api_key: str, max
 
         for retry in range(max_retries + 1):
             try:
+                generation_prompt = prompt
+                if retry == 2:
+                    generation_prompt = reword_prompt_for_safety(prompt, api_key)
+                    logger.info("Reworded prompt on retry %s: %s", retry, generation_prompt)
+
                 response = client.images.generate(
                     model="dall-e-3",
-                    prompt=prompt,
+                    prompt=generation_prompt,
                     n=1,
                     size="1024x1024",
+                    quality="standard",
+                    response_format="b64_json",
                 )
                 break
             except Exception as exc:
-                logger.error("Error generating frame %s (attempt %s/%s): %s", idx, retry + 1, max_retries, exc)
+                logger.error(
+                    "Error generating frame %s (attempt %s/%s): %s",
+                    idx,
+                    retry + 1,
+                    max_retries,
+                    exc,
+                )
+
                 if retry == max_retries:
                     raise
                 time.sleep(2)
