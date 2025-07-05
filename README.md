@@ -35,6 +35,20 @@ The pipeline now supports remote video generation APIs, making high-quality vide
 
 See the "Configuration" section for details on setting up different backends.
 
+### Generating GIFs with DALL·E-3 Tweening
+
+You can create short animations between three keyframes using the included
+`dalle_tween_gui.py` tool. An OpenAI API key is required.
+
+```bash
+python dalle_tween_gui.py
+```
+
+Select your start, middle and end images, choose how many tween frames to
+generate between each pair, and press **Generate**. All frames are saved in
+`./tween_output/frames/` and the final animation will be written to
+`./tween_output/tween.gif`.
+
 ## System Architecture
 
 ### 1. Segment Planning with OpenAI
