@@ -691,10 +691,16 @@ def enhance_prompt(prompt: str, config: Dict, output_dir: str) -> Dict:
     api_key = config.get("openai_api_key")
     base_url = config.get("openai_base_url")
     model = config.get("prompt_enhancement_model", "gpt-4o-mini")
+    default_backend = config.get("default_backend", "wan2.1")
     
     if not api_key:
         logging.warning("No OpenAI API key provided, skipping prompt enhancement")
         return {"keyframe_prompts": [], "video_prompts": []}
+    
+    # Check if using Minimax backend to add character limit constraint
+    minimax_constraint = ""
+    if default_backend.lower() == "minimax":
+        minimax_constraint = "\n\nIMPORTANT: When generating video prompts for Minimax backend, each video prompt must be 500 characters or less. Keep descriptions concise and focused while maintaining essential visual and action details."
     
     try:
         # Set up the OpenAI client
@@ -708,9 +714,9 @@ def enhance_prompt(prompt: str, config: Dict, output_dir: str) -> Dict:
         client = OpenAI(**client_kwargs)
         instructor_client = from_openai(client, mode=Mode.TOOLS)
         
-        # Define the messages
+        # Define the messages with potential Minimax constraint
         messages = [
-            {"role": "system", "content": PROMPT_ENHANCEMENT_INSTRUCTIONS},
+            {"role": "system", "content": PROMPT_ENHANCEMENT_INSTRUCTIONS + minimax_constraint},
             {"role": "user", "content": prompt}
         ]
         
@@ -724,8 +730,8 @@ def enhance_prompt(prompt: str, config: Dict, output_dir: str) -> Dict:
             "messages": messages
         }
         
-        # Only add temperature if not using o4-mini (which doesn't support custom temperature)
-        if not model.startswith("o4-mini"):
+        # Only add temperature if not using o4-mini or gpt-5 (which don't support custom temperature)
+        if not (model.startswith("o4-mini") or "gpt-5" in model):
             completion_params["temperature"] = 0.7
             completion_params["seed"] = 42
             logging.info(f"Using temperature=0.7 and seed=42 with model {model}")

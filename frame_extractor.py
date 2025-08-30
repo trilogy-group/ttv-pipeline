@@ -30,8 +30,10 @@ def extract_last_frame(video_path: str, output_path: str) -> Optional[str]:
         # -sseof -0.1: Seek to 0.1 seconds before the end of the file
         # -vframes 1: Extract only one frame
         # -q:v 2: Set quality level (lower is better, 2-5 is good range for PNG)
+        # -y: Force overwrite of existing files
         cmd = [
             "ffmpeg", 
+            "-y",  # Force overwrite existing files
             "-sseof", "-0.1", 
             "-i", video_path, 
             "-vframes", "1", 
