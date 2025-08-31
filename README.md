@@ -143,7 +143,7 @@ All pipeline behavior is controlled through `pipeline_config.yaml`. Copy `pipeli
     *   `api_priority_order`: (Currently a placeholder for future advanced fallback strategies) Defines a preferred order if multiple remote APIs are configured. The current fallback logic is simpler (tries `fallback_backend` then iterates others).
 
 7.  **Image Generation Configuration**:
-    *   `text_to_image_model`, `image_size`, API keys for image services (`image_router_api_key`, `stability_api_key`, `openai_api_key`).
+    *   `image_generation_model`, `image_size`, API keys for image services (`image_router_api_key`, `stability_api_key`, `openai_api_key`).
 
 8.  **Generation Parameters (Applies to all video backends)**:
     *   `segment_duration_seconds`: Desired duration for each video segment in seconds (e.g., 5.0). Crucial for chaining mode.

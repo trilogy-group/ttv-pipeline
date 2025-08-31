@@ -19,6 +19,7 @@ python-dotenv>=1.0.0
 
 # Image generation APIs
 stability-sdk>=0.6.0
+google-generativeai>=0.8.0
 
 # Remote API support
 # Runway ML

@@ -91,38 +91,61 @@ remote_api_settings:
 # IMAGE GENERATION CONFIGURATION
 # ============================================================================
 
-# Text-to-image model configuration for keyframe generation
+# Image generation model - supports both T2I and I2I based on reference images
 # Options:
-#  - "stabilityai/sd3:stable" (Stability AI SD3 model)
-#  - "openai/gpt-image-1" (OpenAI GPT Image model)
-#  - "stable-diffusion" (Stability AI)
-text_to_image_model: "openai/gpt-image-1"
+#  - "gemini-2.5-flash-image-preview" (Google Gemini 2.5 Flash Image - I2I support)
+#  - "stabilityai/sd3:stable" (Stability AI SD3 model - I2I support)
+#  - "openai/gpt-image-1" (OpenAI GPT Image model - T2I only)
+#  - "stable-diffusion" (Stability AI - I2I support)
+image_generation_model: "gemini-2.5-flash-image-preview"
 
+# Image generation configuration - supports both T2I and I2I based on reference images
+# - For models supporting I2I (Gemini, Stability AI): reference images will be automatically loaded
+# - For models not supporting I2I (OpenAI): falls back to T2I generation
+# - If reference_images_dir is empty and auto_generate_initial is true, initial reference is generated
+# - Single keyframe mode is required for Veo3 (no FLF support)
+# Reference images directory - place all reference images here
+# Images will be automatically loaded and used for character/setting consistency
+reference_images_dir: "input"  # Directory containing reference images
+#
 # Image size configuration (depends on model and video backend)
-# - For OpenAI gpt-image-1: "1024x1024" (1:1), "1536x1024" (3:2), "1024x1536" (2:3)  
+# - For OpenAI gpt-image-1: "1024x1024" (1:1), "1536x1024" (3:2), "1024x1536" (2:3)
 # - For Stability AI: Always "1024x1024" (square)
+# - For Gemini: "1024x1024" (1:1), "1536x1024" (3:2), "1024x1536" (2:3)
 # - For veo3 input: Must be 16:9, 9:16, or 1:1 - recommend "1024x1024" (1:1)
 image_size: "1024x1024"  # 1:1 aspect ratio - compatible with veo3 input requirements
+
+# Auto-generate initial reference image if not provided
+auto_generate_initial: true  # Generate initial image if reference_images_dir is empty
+
+# Single keyframe mode for Veo3 (no FLF support)
+single_keyframe_mode: true   # Generate one keyframe per segment for I2V
+
+# Position of keyframe for I2V generation: first/middle/last
+keyframe_position: "first"  # Position of keyframe: first/middle/last
+
+# API keys for image generation services
+# Gemini API configuration
+gemini_api_key: "YOUR_GEMINI_API_KEY"    # Required for Gemini image generation
+
+# OpenAI API configuration
+# The API key is used for:
+# - Image generation when image_generation_model is "openai/gpt-image-1"
+# - Prompt enhancement using the model specified below
+openai_api_key: "YOUR_OPENAI_API_KEY"
+openai_base_url: https://api.openai.com/v1
+
+stability_api_key: "YOUR_STABILITY_API_KEY"  # Stability AI API key
+
+image_router_api_key: "YOUR_IMAGE_ROUTER_API_KEY"  # For ImageRouter service
+
+# Model used for prompt enhancement
+prompt_enhancement_model: o4-mini
 
 # Video aspect ratio for veo3 backend (separate from image size)
 # - "16:9" (widescreen landscape) - recommended for most content
 # - "9:16" (portrait/mobile) - for vertical content
 video_aspect_ratio: "16:9"  # Default to widescreen landscape
-
-# API keys for image generation services
-image_router_api_key: "YOUR_IMAGE_ROUTER_API_KEY"  # For ImageRouter service
-
-stability_api_key: "YOUR_STABILITY_API_KEY"  # Stability AI API key
-
-# OpenAI API configuration
-# The API key is used for:
-# - Image generation when text_to_image_model is "openai/gpt-image-1"
-# - Prompt enhancement using the model specified below
-openai_api_key: "YOUR_OPENAI_API_KEY"
-openai_base_url: https://api.openai.com/v1
-
-# Model used for prompt enhancement
-prompt_enhancement_model: o4-mini
 
 # ============================================================================
 # GENERATION PARAMETERS

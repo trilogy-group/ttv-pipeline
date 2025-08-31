@@ -18,6 +18,7 @@ import logging
 import os
 import subprocess
 import tempfile
+from typing import Dict
 import time
 import yaml
 from frame_extractor import extract_last_frame
@@ -220,15 +221,18 @@ def run_command(cmd: List[str], cwd: str = None) -> str:
         raise
 
 def generate_keyframes(
+    keyframe_prompts: List[str],
     config: Dict,
-    keyframe_prompts: List[Dict],
     output_dir: str,
     model_name: str = None,
     imageRouter_api_key: str = None,
     stability_api_key: str = None,
     openai_api_key: str = None,
+    gemini_api_key: str = None,
     initial_image_path: str = None,
     image_size: str = None,
+    reference_images_dir: Dict[str, str] = None,
+    max_retries: int = 3,
 ) -> List[str]:
     """Generate keyframes for the video pipeline"""
     # Import the keyframe generator module
@@ -254,8 +258,11 @@ def generate_keyframes(
         imageRouter_api_key=imageRouter_api_key,
         stability_api_key=stability_api_key,
         openai_api_key=openai_api_key,
+        gemini_api_key=gemini_api_key,
         initial_image_path=initial_image_path,
-        image_size=image_size
+        image_size=image_size,
+        reference_images_dir=reference_images_dir,
+        max_retries=max_retries
     )
         
 def stitch_video_segments(video_paths: List[str], output_file: str) -> Optional[str]:
@@ -264,29 +271,20 @@ def stitch_video_segments(video_paths: List[str], output_file: str) -> Optional[
         logging.warning("No video paths provided for stitching")
         return None
     
-    # Create a temporary file list for ffmpeg
+    # Create a temporary file listing the segments
     with tempfile.NamedTemporaryFile('w', suffix='.txt', delete=False) as f:
         for path in video_paths:
             f.write(f"file '{os.path.abspath(path)}'\n")
-        file_list = f.name
+        list_file = f.name
     
-    # Run ffmpeg to concatenate videos
-    cmd = [
-        "ffmpeg", "-y", "-f", "concat", "-safe", "0", 
-        "-i", file_list, "-c", "copy", output_file
-    ]
-    logging.info(f"Executing: {' '.join(cmd)}")
+    # Use ffmpeg to concatenate the segments
+    cmd = ["ffmpeg", "-f", "concat", "-safe", "0", 
+        "-i", list_file, "-c", "copy", output_file, "-y"]
+    run_command(cmd)
     
-    try:
-        subprocess.run(cmd, check=True, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
-        os.unlink(file_list)
-        logging.info(f"Stitched video saved to: {output_file}")
-        return output_file
-    except subprocess.CalledProcessError as e:
-        logging.error(f"Error stitching videos: {e.stderr.decode() if e.stderr else str(e)}")
-        if os.path.exists(file_list):
-            os.unlink(file_list)
-        return None
+    # Clean up the temporary file
+    os.unlink(list_file)
+    return output_file
 
 def generate_single_video_segment(
     wan2_dir: str,
@@ -296,6 +294,7 @@ def generate_single_video_segment(
     flf2v_model_dir: str,
     frame_num: int = 81,
     gpu_ids: List[int] = None,
+    single_keyframe_mode: bool = False
 ) -> str:
     """Generate a single video segment using the FLF2V model
     
@@ -307,7 +306,8 @@ def generate_single_video_segment(
         flf2v_model_dir: Path to the FLF2V model directory
         frame_num: Number of frames to generate
         gpu_ids: List of GPU IDs to use for this segment generation
-        
+        single_keyframe_mode: If True, use single keyframe for I2V generation (for Veo3)
+    
     Returns:
         Path to the generated video file
     """
@@ -362,14 +362,13 @@ def generate_single_video_segment(
         logging.error(f"Keyframe not found: {last_file}")
         logging.error(f"Directory contents: {os.listdir(frames_dir)}")
         raise FileNotFoundError(f"Last frame not found at {last_file}")
-        
+            
     # Output video file path
     video_file = os.path.join(videos_dir, f"segment_{seg:02d}.mp4")
     
     logging.info(f"First frame path (must exist): {os.path.abspath(first_file)}")
     logging.info(f"Last frame path (must exist): {os.path.abspath(last_file)}")
     
-    # Double-check files exist (additional safety)
     if not os.path.exists(first_file):
         raise FileNotFoundError(f"First frame not found at {first_file}")
     if not os.path.exists(last_file):
@@ -415,7 +414,7 @@ def generate_single_video_segment(
         cmd.extend(["--dit_fsdp", "--t5_fsdp"])
     else:
         # Non-distributed execution - direct Python call
-        logging.info(f"Using non-distributed execution for segment {seg}")
+        logging.info("Using non-distributed execution")
         cmd = ["python", "generate.py"]
         cmd.extend(base_cmd)
     
@@ -434,15 +433,15 @@ def generate_video_segments(
     output_dir: str,
     flf2v_model_dir: str,
     frame_num: int = 81,
+    single_keyframe_mode: bool = False
 ) -> List[str]:
     """Generate video segments using the FLF2V model
     
     This function can run in parallel if configured in the config file.
     """
-    # ALWAYS use this exact directory structure - no exceptions
-    base_dir = os.getcwd()
-    frames_dir = os.path.join(base_dir, "output", "frames")
-    videos_dir = os.path.join(base_dir, "output", "videos")
+    # Use consistent directory structure with other functions
+    frames_dir = os.path.join(output_dir, "frames")
+    videos_dir = os.path.join(output_dir, "videos")
     
     # Create fresh directories
     os.makedirs(frames_dir, exist_ok=True)
@@ -474,6 +473,11 @@ def generate_video_segments(
         logging.warning(f"Adjusted to {parallel_segments} parallel segments with 1 GPU each")
     
     logging.info(f"GPU configuration: {total_gpus} total GPUs, {parallel_segments} parallel segments, {gpus_per_segment} GPUs per segment")
+    
+    # Check if we're in single-keyframe mode (for Veo3)
+    if single_keyframe_mode:
+        logging.info("Using single-keyframe mode for video generation")
+        return generate_video_segments_single_keyframe(config, video_prompts, output_dir)
     
     # Skip parallelization if only one segment or parallel_segments=1
     if len(video_prompts) <= 1 or parallel_segments <= 1:
@@ -530,7 +534,10 @@ def generate_video_segments(
             logging.error(f"Error in parallel processing: {e}")
             # Fallback to sequential processing
             logging.info("Falling back to sequential processing")
-            return generate_video_segments_sequential(wan2_dir, config, video_prompts, output_dir, flf2v_model_dir, frame_num)
+            if single_keyframe_mode:
+                return generate_video_segments_single_keyframe(config, video_prompts, output_dir)
+            else:
+                return generate_video_segments_sequential(wan2_dir, config, video_prompts, output_dir, flf2v_model_dir, frame_num)
     
     # Sort video paths by segment number to ensure correct order
     video_paths.sort()
@@ -555,6 +562,127 @@ def process_segment(prompt_item, gpu_ids, wan2_dir, config, output_dir, flf2v_mo
         return None
 
 
+def generate_video_segments_single_keyframe(
+    config: Dict,
+    video_prompts: List[Dict],
+    output_dir: str
+) -> List[str]:
+    """
+    Generate video segments using single keyframe for I2V generation (e.g., Veo3).
+    
+    Args:
+        config: Configuration dictionary
+        video_prompts: List of video prompts with keyframe paths
+        output_dir: Directory to save generated videos
+    
+    Returns:
+        List of paths to generated video files
+    """
+    import generators.factory as factory
+    from generators.exceptions import InvalidInputError, GenerationError
+    
+    video_paths = []
+    
+    # Get the video generation backend
+    backend = config.get('default_video_generation_backend', 'veo3')
+    logging.info(f"Using {backend} for single-keyframe video generation")
+    
+    # Get segment duration
+    segment_duration = config.get('segment_duration_seconds', 5.0)
+    
+    # Get I2I mode configuration
+    i2i_config = config.get('i2i_mode', {})
+    keyframe_position = i2i_config.get('keyframe_position', 'first')
+    
+    # Use consistent directory structure with other functions
+    frames_dir = os.path.join(output_dir, "frames")
+    videos_dir = os.path.join(output_dir, "videos")
+    
+    # Create directories if they don't exist
+    os.makedirs(frames_dir, exist_ok=True)
+    os.makedirs(videos_dir, exist_ok=True)
+    
+    # Ensure we're using absolute paths for keyframe files
+    frames_dir_abs = os.path.abspath(frames_dir)
+    logging.info(f"Absolute frames directory path for single-keyframe mode: {frames_dir_abs}")
+    
+    for prompt_item in video_prompts:
+        seg, prompt_text = prompt_item["segment"], prompt_item["prompt"]
+        
+        # Select the keyframe based on position setting
+        if keyframe_position == 'first' and 'first_frame' in prompt_item:
+            keyframe_path = prompt_item['first_frame']
+        elif keyframe_position == 'last' and 'last_frame' in prompt_item:
+            keyframe_path = prompt_item['last_frame']
+        elif keyframe_position == 'middle':
+            # For middle, use first frame if available (could be enhanced later)
+            keyframe_path = prompt_item.get('first_frame', prompt_item.get('last_frame'))
+        else:
+            # Default to first frame
+            keyframe_path = prompt_item.get('first_frame', prompt_item.get('last_frame'))
+        
+        # Fix keyframe path to use absolute path
+        if keyframe_path:
+            if keyframe_path == 'provided_start_image.png':
+                # This should be segment_00.png
+                keyframe_path = os.path.join(frames_dir_abs, 'segment_00.png')
+            elif keyframe_path.startswith('segment_') and keyframe_path.endswith('.png'):
+                # Convert relative segment reference to absolute path
+                keyframe_path = os.path.join(frames_dir_abs, keyframe_path)
+            else:
+                # For any other reference, try to resolve it
+                keyframe_path = os.path.join(frames_dir_abs, keyframe_path)
+        
+        if not keyframe_path:
+            logging.error(f"No keyframe found for segment {seg}")
+            continue
+        
+        logging.info(f"Generating video for segment {seg} using keyframe: {keyframe_path}")
+        
+        try:
+            # Create video generator
+            generator = factory.create_video_generator(backend, config)
+            
+            # Generate video from single keyframe
+            video_file = os.path.join(output_dir, f"segment_{seg:03d}.mp4")
+            
+            # Call generator's generate_video method
+            generator.generate_video(
+                prompt=prompt_text,
+                input_image_path=keyframe_path,
+                output_path=video_file,
+                duration=segment_duration
+            )
+            
+            video_paths.append(video_file)
+            logging.info(f"Generated video segment {seg}: {video_file}")
+            
+        except (InvalidInputError, GenerationError) as e:
+            logging.error(f"Failed to generate video for segment {seg}: {e}")
+            
+            # Try fallback if configured
+            fallback_generator = factory.get_fallback_generator(config, backend)
+            if fallback_generator:
+                try:
+                    logging.info(f"Trying fallback generator for segment {seg}")
+                    fallback_generator.generate_video(
+                        prompt=prompt_text,
+                        input_image_path=keyframe_path,
+                        output_path=video_file,
+                        duration=segment_duration
+                    )
+                    video_paths.append(video_file)
+                    logging.info(f"Fallback succeeded for segment {seg}")
+                except Exception as fallback_error:
+                    logging.error(f"Fallback also failed for segment {seg}: {fallback_error}")
+            else:
+                logging.error(f"No fallback available for segment {seg}")
+        
+        except Exception as e:
+            logging.error(f"Unexpected error generating video for segment {seg}: {e}")
+    
+    return video_paths
+
 def generate_video_segments_sequential(
     wan2_dir: str,
     config: Dict,
@@ -566,10 +694,9 @@ def generate_video_segments_sequential(
     """Generate video segments sequentially using the FLF2V model"""
     video_paths = []
     
-    # ALWAYS use this exact directory structure - no exceptions
-    base_dir = os.getcwd()
-    frames_dir = os.path.join(base_dir, "output", "frames")
-    videos_dir = os.path.join(base_dir, "output", "videos")
+    # Use consistent directory structure with other functions
+    frames_dir = os.path.join(output_dir, "frames")
+    videos_dir = os.path.join(output_dir, "videos")
     
     for item in video_prompts:
         seg, prompt_text = item["segment"], item["prompt"]
@@ -641,8 +768,8 @@ def generate_video_segments_sequential(
         if gpu_count > 1:
             # Distributed execution with torchrun
             # Use different ports for different segment processes to avoid conflicts
-            port = 29500 + int(processing_segment)  # Use different ports based on segment number
-            logging.info(f"Using distributed execution with torchrun for segment {processing_segment} (port {port})")
+            port = 29500 + int(seg)  # Use different ports based on segment number
+            logging.info(f"Using distributed execution with torchrun for segment {seg} (port {port})")
             cmd = ["torchrun", f"--nproc_per_node={gpu_count}", f"--rdzv_endpoint=localhost:{port}", "generate.py"]
             # Add FSDP flags for distributed training
             cmd.extend(base_cmd)
@@ -665,17 +792,20 @@ def concatenate_videos(segment_paths: List[str], output_file: str) -> None:
     logging.info(f"Concatenating {len(segment_paths)} segments into {output_file}")
     
     # Create a temporary file listing the segments
-    with tempfile.NamedTemporaryFile(mode='w+', suffix='.txt', delete=False) as f:
-        for segment in segment_paths:
-            f.write(f"file '{os.path.abspath(segment)}'\n")
+    with tempfile.NamedTemporaryFile('w', suffix='.txt', delete=False) as f:
+        for path in segment_paths:
+            f.write(f"file '{os.path.abspath(path)}'\n")
         list_file = f.name
     
     # Use ffmpeg to concatenate the segments
-    cmd = ["ffmpeg", "-f", "concat", "-safe", "0", "-i", list_file, "-c", "copy", output_file]
+    cmd = ["ffmpeg", "-f", "concat", "-safe", "0", 
+        "-i", list_file, "-c", "copy", output_file]
     run_command(cmd)
     
     # Clean up the temporary file
     os.unlink(list_file)
+
+# ============================================================================
 # Prompt Enhancement Function
 # ============================================================================
 
@@ -877,16 +1007,16 @@ def generate_video_chaining_mode(
                     # Generate initial frame using available API
                     initial_frame_prompt = f"First frame establishing shot: {prompt_text}"
                     
-                    # Check which model to use based on text_to_image_model parameter
-                    text_to_image_model = config.get("text_to_image_model", "stabilityai/sd3:stable")
+                    # Check which model to use based on image_generation_model parameter
+                    image_generation_model = config.get("image_generation_model", "stabilityai/sd3:stable")
                     
-                    if "openai" in text_to_image_model.lower():
+                    if "openai" in image_generation_model.lower():
                         # Use OpenAI for initial frame
                         if not config.get("openai_api_key"):
-                            logging.error(f"Selected model {text_to_image_model} but no OpenAI API key provided")
+                            logging.error(f"Selected model {image_generation_model} but no OpenAI API key provided")
                             raise ValueError("OpenAI API key required for selected model")
                             
-                        logging.info(f"Generating initial frame with OpenAI {text_to_image_model}")
+                        logging.info(f"Generating initial frame with OpenAI {image_generation_model}")
                         from keyframe_generator import generate_keyframe_with_openai
                         generate_keyframe_with_openai(
                             prompt=initial_frame_prompt,
@@ -894,13 +1024,13 @@ def generate_video_chaining_mode(
                             openai_api_key=config.get("openai_api_key"),
                             size=config.get("image_size", "1536x1024")
                         )
-                    elif "stability" in text_to_image_model.lower():
+                    elif "stability" in image_generation_model.lower():
                         # Use Stability AI for initial frame
                         if not config.get("stability_api_key"):
-                            logging.error(f"Selected model {text_to_image_model} but no Stability AI API key provided")
+                            logging.error(f"Selected model {image_generation_model} but no Stability AI API key provided")
                             raise ValueError("Stability AI API key required for selected model")
                             
-                        logging.info(f"Generating initial frame with Stability AI {text_to_image_model}")
+                        logging.info(f"Generating initial frame with Stability AI {image_generation_model}")
                         from keyframe_generator import generate_keyframe_with_stability
                         generate_keyframe_with_stability(
                             prompt=initial_frame_prompt,
@@ -910,16 +1040,16 @@ def generate_video_chaining_mode(
                     else:
                         # Try ImageRouter
                         if config.get("image_router_api_key"):
-                            logging.info(f"Generating initial frame with ImageRouter using model {text_to_image_model}")
+                            logging.info(f"Generating initial frame with ImageRouter using model {image_generation_model}")
                             from keyframe_generator import generate_keyframe_with_imageRouter
                             generate_keyframe_with_imageRouter(
                                 prompt=initial_frame_prompt,
                                 output_path=input_image,
-                                model_name=text_to_image_model,
+                                model_name=image_generation_model,
                                 imageRouter_api_key=config.get("image_router_api_key")
                             )
                         else:
-                            logging.error(f"No API key provided for model {text_to_image_model}")
+                            logging.error(f"No API key provided for model {image_generation_model}")
                             raise ValueError("Initial image required or appropriate API key for generation")
                     
                     logging.info(f"Generated initial frame at {input_image}")
@@ -1061,42 +1191,47 @@ def run_pipeline(config_path: str) -> None:
 
     # Step 2: Generate keyframes
     logging.info("Generating keyframes...")
-    text_to_image_model = config.get('text_to_image_model')
+    image_generation_model = config.get('image_generation_model')
     # Get API keys from config
-    stability_api_key = config.get("stability_api_key")
-    imageRouter_api_key = config.get("image_router_api_key")
+    openai_api_key = config.get('openai_api_key')
+    stability_api_key = config.get('stability_api_key')
+    imageRouter_api_key = config.get('image_router_token')
+    gemini_api_key = config.get('gemini_api_key')
     
-    # Get model configurations
-    text_to_image_model = config.get("text_to_image_model", "stabilityai/sdxl-turbo:free")
+    # Get keyframe generation settings
+    model_name = config.get('keyframe_prompt_model', 'dall-e-3')
+    image_size = config.get('image_size', '1024x1024')
     
-    # Get image size configuration if specified
-    image_size = None
-    if "openai" in text_to_image_model.lower():
-        # Default OpenAI image size is 1536x1024
-        image_size = config.get("image_size", "1536x1024")
-        logging.info(f"Using OpenAI image size: {image_size}")
-    elif "stability" in text_to_image_model.lower():
-        # Stability AI uses fixed 1024x1024 size
+    # Get I2I mode settings (now consolidated into main image generation)
+    reference_images_dir = config.get('reference_images_dir')
+    auto_generate_initial = config.get('auto_generate_initial', True)
+    keyframe_position = config.get('keyframe_position', 'first')
+    
+    # Adjust image size for Stability AI if needed
+    if image_generation_model and "stability" in image_generation_model.lower():
         image_size = "1024x1024"
         logging.info(f"Using Stability AI image size: {image_size}")
     
     initial_image = config.get('initial_image')
     
     # Log which API will be used based on configured model
-    if "openai" in text_to_image_model.lower():
-        if config.get('openai_api_key'):
-            logging.info(f"Using OpenAI API ({text_to_image_model}) for keyframe generation")
+    if image_generation_model:  # Check if image_generation_model is not None
+        if "openai" in image_generation_model.lower():
+            if config.get('openai_api_key'):
+                logging.info(f"Using OpenAI API ({image_generation_model}) for keyframe generation")
+            else:
+                logging.warning(f"Selected model {image_generation_model} but no OpenAI API key provided")
+        elif "stability" in image_generation_model.lower():
+            if stability_api_key:
+                logging.info(f"Using Stability AI API ({image_generation_model}) for keyframe generation")
+            else:
+                logging.warning(f"Selected model {image_generation_model} but no Stability AI API key provided")
+        elif imageRouter_api_key:
+            logging.info(f"Using ImageRouter API with model {image_generation_model} for keyframe generation")
         else:
-            logging.warning(f"Selected model {text_to_image_model} but no OpenAI API key provided")
-    elif "stability" in text_to_image_model.lower():
-        if stability_api_key:
-            logging.info(f"Using Stability AI API ({text_to_image_model}) for keyframe generation")
-        else:
-            logging.warning(f"Selected model {text_to_image_model} but no Stability AI API key provided")
-    elif imageRouter_api_key:
-        logging.info(f"Using ImageRouter API with model {text_to_image_model} for keyframe generation")
+            logging.warning("No suitable API keys provided for the selected image generation model")
     else:
-        logging.warning("No suitable API keys provided for the selected image generation model")
+        logging.warning("No image generation model specified in configuration")
     
     # Check if we need to generate an initial frame (segment_00.png)
     if not initial_image:
@@ -1118,8 +1253,23 @@ def run_pipeline(config_path: str) -> None:
             os.makedirs(frames_dir, exist_ok=True)
             initial_frame_path = os.path.join(frames_dir, "segment_00.png")
             
-            # Generate using appropriate API
-            if "openai" in text_to_image_model.lower() and config.get('openai_api_key'):
+            # Generate using appropriate API based on configured model
+            if "gemini" in image_generation_model.lower() and config.get('gemini_api_key'):
+                logging.info(f"Generating initial frame with Gemini: {initial_frame_prompt}")
+                try:
+                    generate_keyframe_with_gemini(
+                        prompt=initial_frame_prompt,
+                        output_path=initial_frame_path,
+                        gemini_api_key=config.get('gemini_api_key'),
+                        model_name=image_generation_model,
+                        max_retries=config.get('remote_api_settings', {}).get('max_retries', 3)
+                    )
+                    initial_image = initial_frame_path  # Use this as our initial image
+                    logging.info(f"Generated initial frame at {initial_frame_path}")
+                except Exception as e:
+                    logging.error(f"Failed to generate initial frame with Gemini: {e}")
+                    raise
+            elif "openai" in image_generation_model.lower() and config.get('openai_api_key'):
                 logging.info(f"Generating initial frame with OpenAI: {initial_frame_prompt}")
                 try:
                     generate_keyframe_with_openai(
@@ -1131,9 +1281,9 @@ def run_pipeline(config_path: str) -> None:
                     initial_image = initial_frame_path  # Use this as our initial image
                     logging.info(f"Generated initial frame at {initial_frame_path}")
                 except Exception as e:
-                    logging.error(f"Failed to generate initial frame: {e}")
+                    logging.error(f"Failed to generate initial frame with OpenAI: {e}")
                     raise
-            elif "stability" in text_to_image_model.lower() and stability_api_key:
+            elif "stability" in image_generation_model.lower() and stability_api_key:
                 logging.info(f"Generating initial frame with Stability AI: {initial_frame_prompt}")
                 try:
                     generate_keyframe_with_stability(
@@ -1144,11 +1294,11 @@ def run_pipeline(config_path: str) -> None:
                     initial_image = initial_frame_path  # Use this as our initial image
                     logging.info(f"Generated initial frame at {initial_frame_path}")
                 except Exception as e:
-                    logging.error(f"Failed to generate initial frame: {e}")
+                    logging.error(f"Failed to generate initial frame with Stability AI: {e}")
                     raise
             else:
                 logging.error("Unable to generate initial frame, no suitable API keys provided")
-                raise ValueError("Cannot generate initial frame without OpenAI or Stability AI API keys")
+                raise ValueError("Cannot generate initial frame without OpenAI, Gemini, or Stability AI API keys")
     
     # Determine which generation mode we're using
     generation_mode = config.get('generation_mode', 'keyframe').lower()
@@ -1168,12 +1318,15 @@ def run_pipeline(config_path: str) -> None:
             config=config,
             keyframe_prompts=enhanced_data['keyframe_prompts'],
             output_dir=frames_dir,
-            model_name=text_to_image_model,
+            model_name=image_generation_model,
             imageRouter_api_key=imageRouter_api_key,
             stability_api_key=stability_api_key,
             openai_api_key=config.get('openai_api_key'),
+            gemini_api_key=config.get('gemini_api_key'),
             initial_image_path=initial_image,
-            image_size=image_size
+            image_size=image_size,
+            reference_images_dir=reference_images_dir,
+            max_retries=config.get('remote_api_settings', {}).get('max_retries', 3)
         )
         
         # Ensure segment_00.png exists before proceeding to video generation
@@ -1203,11 +1356,43 @@ def run_pipeline(config_path: str) -> None:
         # Double-check the frames directory contents before video generation
         logging.info(f"Frames directory contents before video generation: {os.listdir(frames_dir)}")
         
+        # Fix video prompt paths to use absolute paths to actual keyframe files
+        # The OpenAI prompt enhancement generates relative paths, but we need absolute paths
+        frames_dir_abs = os.path.abspath(frames_dir)
+        logging.info(f"Absolute frames directory path: {frames_dir_abs}")
+        
+        # Map relative keyframe references to actual generated files
+        for i, prompt_item in enumerate(enhanced_data['video_prompts']):
+            # Fix first_frame path
+            if 'first_frame' in prompt_item:
+                first_frame_ref = prompt_item['first_frame']
+                if first_frame_ref == 'provided_start_image.png':
+                    # This should be segment_00.png
+                    prompt_item['first_frame'] = os.path.join(frames_dir_abs, 'segment_00.png')
+                elif first_frame_ref.startswith('segment_') and first_frame_ref.endswith('.png'):
+                    # Convert relative segment reference to absolute path
+                    prompt_item['first_frame'] = os.path.join(frames_dir_abs, first_frame_ref)
+                else:
+                    # For any other reference, try to resolve it
+                    prompt_item['first_frame'] = os.path.join(frames_dir_abs, first_frame_ref)
+                logging.info(f"Updated first_frame for segment {prompt_item.get('segment', i)}: {prompt_item['first_frame']}")
+            
+            # Fix last_frame path
+            if 'last_frame' in prompt_item:
+                last_frame_ref = prompt_item['last_frame']
+                if last_frame_ref.startswith('segment_') and last_frame_ref.endswith('.png'):
+                    # Convert relative segment reference to absolute path
+                    prompt_item['last_frame'] = os.path.join(frames_dir_abs, last_frame_ref)
+                else:
+                    # For any other reference, try to resolve it
+                    prompt_item['last_frame'] = os.path.join(frames_dir_abs, last_frame_ref)
+                logging.info(f"Updated last_frame for segment {prompt_item.get('segment', i)}: {prompt_item['last_frame']}")
+        
         # Get FLF2V model directory for keyframe mode
         flf2v_model_dir = config.get('flf2v_model_dir', './Wan2.1-FLF2V-14B-720P')
         
         # Step 3: Generate video segments using FLF2V model
-        logging.info("Generating video segments using FLF2V model (keyframe mode)...")
+        logging.info("Generating video segments using FLF2F model (keyframe mode)...")
     
     else:  # chaining mode
         # ----- CHAINING MODE -----
@@ -1249,13 +1434,17 @@ def run_pipeline(config_path: str) -> None:
     
     # Only run video generation for keyframe mode (chaining mode already generated videos)
     if generation_mode == 'keyframe':
+        # Check if we should use single-keyframe mode (for Veo3 with I2I)
+        single_keyframe_mode = config.get('single_keyframe_mode', False)
+        
         video_paths = generate_video_segments(
             wan2_dir=wan2_dir,
             config=config,
             video_prompts=enhanced_data['video_prompts'],
             output_dir=output_dir,
             flf2v_model_dir=flf2v_model_dir,
-            frame_num=config.get('frame_num', 81)
+            frame_num=config.get('frame_num', 81),
+            single_keyframe_mode=single_keyframe_mode
         )
     
     # Log results

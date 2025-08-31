@@ -9,14 +9,17 @@ Gemini Flash image generation model.
 import argparse
 import json
 import logging
+import mimetypes
 import os
 from pathlib import Path
 import io
 import base64
 import requests
-from typing import Optional
+from typing import Optional, Dict, Any
+import time
 
 from PIL import Image
+import google.generativeai as genai
 
 # Terminal colors for pretty output
 class Colors:
@@ -403,58 +406,210 @@ def generate_keyframe_with_openai(prompt, output_path, openai_api_key, input_ima
         logging.error(f"Error using OpenAI API: {e}")
         raise
 
-def create_mask_for_image(image_path, output_mask_path, openai_api_key, prompt=None):
-    """Creates a mask for the specified image using OpenAI API"""
+def generate_keyframe_with_gemini(
+    prompt: str,
+    output_path: str,
+    gemini_api_key: str,
+    input_image_path: Optional[str] = None,
+    reference_images_dir: Optional[str] = None,
+    model_name: str = "gemini-2.5-flash-image-preview",
+    max_retries: int = 2
+) -> str:
+    """
+    Generate a keyframe using Google's Gemini API.
+    
+    Args:
+        prompt: Text prompt for image generation
+        output_path: Path to save the generated image
+        gemini_api_key: API key for Gemini
+        input_image_path: Optional path to input image for I2I generation
+        reference_images_dir: Optional directory containing reference images for consistency
+        model_name: Gemini model to use
+        max_retries: Maximum number of retry attempts
+    
+    Returns:
+        Path to the generated image
+    """
     try:
-        import openai
-        from openai import OpenAI
-        import base64
-        from io import BytesIO
-        from PIL import Image
+        # Configure Gemini API
+        genai.configure(api_key=gemini_api_key)
         
-        # If no specific prompt is provided, use a default one
-        if not prompt:
-            prompt = "Generate a mask for this image where white (255) represents the main subject/character and black (0) represents the background. Return an alpha channel mask."
+        # Initialize the model
+        generation_config = {
+            "temperature": 0.9,
+            "top_p": 0.95,
+            "top_k": 40,
+            "max_output_tokens": 8192,
+        }
         
-        # Initialize OpenAI client
-        client = OpenAI(api_key=openai_api_key)
-        
-        # Open the input image
-        with open(image_path, "rb") as img_file:
-            input_image = img_file.read()
-        
-        # Use OpenAI to generate the mask
-        logging.info(f"Generating mask with prompt: {prompt}")
-        response = client.images.edit(
-            model="gpt-image-1",
-            image=open(image_path, "rb"),
-            prompt=prompt
+        model = genai.GenerativeModel(
+            model_name=model_name,
+            generation_config=generation_config
         )
         
-        # Save the mask
-        mask_base64 = response.data[0].b64_json
-        mask_bytes = base64.b64decode(mask_base64)
+        # Build prompt with reference images if provided
+        prompt_parts = []
         
-        # Create an RGBA image from the bytes
-        mask_img = Image.open(BytesIO(mask_bytes))
+        # Add reference images from directory for consistency
+        if reference_images_dir and os.path.isdir(reference_images_dir):
+            prompt_parts.append("Reference images for character and setting consistency:")
+            # Load all images from the reference directory
+            for filename in os.listdir(reference_images_dir):
+                if filename.lower().endswith(('.png', '.jpg', '.jpeg', '.webp', '.bmp')):
+                    image_path = os.path.join(reference_images_dir, filename)
+                    if os.path.exists(image_path):
+                        # Validate that the reference image is valid before using it
+                        try:
+                            from PIL import Image
+                            img = Image.open(image_path)
+                            img.verify()  # Verify it's a valid image
+                            with open(image_path, "rb") as f:
+                                image_data = f.read()
+                            prompt_parts.append(genai.upload_file(image_path, mime_type=mimetypes.guess_type(image_path)[0]))
+                            # Use filename without extension as reference name
+                            ref_name = os.path.splitext(filename)[0]
+                            prompt_parts.append(f"{ref_name} reference")
+                            logging.info(f"Added reference image: {filename}")
+                        except Exception as verify_error:
+                            logging.warning(f"Skipping invalid reference image {filename}: {verify_error}")
         
-        # Convert to grayscale and then to RGBA with alpha channel
-        mask_grayscale = mask_img.convert("L")
-        mask_rgba = mask_grayscale.convert("RGBA")
-        mask_rgba.putalpha(mask_grayscale)  # Use grayscale as alpha
+        # Add input image for I2I if provided
+        if input_image_path and os.path.exists(input_image_path):
+            # Validate that the input image is valid before using it
+            try:
+                from PIL import Image
+                img = Image.open(input_image_path)
+                img.verify()  # Verify it's a valid image
+                logging.info(f"Using input image for I2I: {input_image_path}")
+                with open(input_image_path, "rb") as f:
+                    input_image_data = f.read()
+                prompt_parts.append(genai.upload_file(input_image_path, mime_type=mimetypes.guess_type(input_image_path)[0]))
+                prompt_parts.append("Base image for editing")
+            except Exception as verify_error:
+                logging.error(f"Input image is invalid: {verify_error}")
+                raise Exception(f"Cannot use invalid input image: {input_image_path}")
         
-        # Save the mask
-        os.makedirs(os.path.dirname(output_mask_path), exist_ok=True)
-        mask_rgba.save(output_mask_path, format="PNG")
+        # Add the text prompt
+        prompt_parts.append(prompt)
         
-        logging.info(f"Mask saved to: {output_mask_path}")
-        return output_mask_path
-        
+        # Generate with retry mechanism
+        for retry in range(max_retries + 1):
+            try:
+                if retry > 0:
+                    logging.info(f"Retry {retry}/{max_retries} for prompt...")
+                    # Add exponential backoff
+                    time.sleep(2 ** retry)
+                
+                # Generate content
+                response = model.generate_content(prompt_parts)
+                
+                # Log detailed response information for debugging
+                logging.info(f"Gemini API response received. Candidates: {len(response.candidates) if response.candidates else 0}")
+                if response.candidates:
+                    logging.info(f"First candidate parts: {len(response.candidates[0].content.parts) if response.candidates[0].content and response.candidates[0].content.parts else 0}")
+                    for i, part in enumerate(response.candidates[0].content.parts):
+                        logging.info(f"Part {i}: type={type(part)}, has_inline_data={hasattr(part, 'inline_data')}")
+                        if hasattr(part, 'inline_data') and part.inline_data:
+                            logging.info(f"Part {i}: inline_data length={len(part.inline_data.data) if part.inline_data.data else 0}")
+                
+                # Check if response contains an image
+                if response.candidates and response.candidates[0].content.parts:
+                    # Find the part with the largest inline_data (most likely to be the image)
+                    image_parts = []
+                    for part in response.candidates[0].content.parts:
+                        if hasattr(part, 'inline_data') and part.inline_data:
+                            image_parts.append(part)
+                    
+                    if image_parts:
+                        # Select the part with the largest data (most likely to be the actual image)
+                        selected_part = max(image_parts, key=lambda p: len(p.inline_data.data))
+                        logging.info(f"Selected part with data length: {len(selected_part.inline_data.data)}")
+                        
+                        # Save the generated image
+                        image_data = selected_part.inline_data.data
+                        logging.info(f"Raw image data length: {len(image_data)}")
+                        
+                        # Log the first 100 characters of the data for debugging
+                        logging.info(f"First 100 chars of image data: {str(image_data)[:100]}")
+                        
+                        # Check if image_data is already bytes or needs base64 decoding
+                        if isinstance(image_data, str):
+                            # If it's a string, assume it's base64 encoded
+                            try:
+                                image_bytes = base64.b64decode(image_data)
+                                logging.info(f"Decoded image bytes length: {len(image_bytes)}")
+                            except Exception as decode_error:
+                                logging.error(f"Failed to decode base64 image data: {decode_error}")
+                                raise
+                        elif isinstance(image_data, bytes):
+                            # If it's already bytes, use it directly
+                            image_bytes = image_data
+                            logging.info(f"Image data is already bytes, length: {len(image_bytes)}")
+                        else:
+                            logging.error(f"Unexpected image data type: {type(image_data)}")
+                            raise Exception(f"Unexpected image data type: {type(image_data)}")
+                        
+                        # Create directory if it doesn't exist
+                        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+                        
+                        # Save the image
+                        with open(output_path, "wb") as f:
+                            f.write(image_bytes)
+                        
+                        # Log first few bytes of the saved file for debugging
+                        with open(output_path, "rb") as f:
+                            first_bytes = f.read(20)
+                            logging.info(f"First 20 bytes of saved file: {first_bytes}")
+                            
+                            # Try to determine file type from magic bytes
+                            if len(first_bytes) >= 8:
+                                if first_bytes.startswith(b'\x89PNG\r\n\x1a\n'):
+                                    logging.info("File appears to be PNG format")
+                                elif first_bytes.startswith(b'\xff\xd8\xff'):
+                                    logging.info("File appears to be JPEG format")
+                                elif first_bytes.startswith(b'GIF87a') or first_bytes.startswith(b'GIF89a'):
+                                    logging.info("File appears to be GIF format")
+                                elif first_bytes.startswith(b'RIFF') and first_bytes[8:12] == b'WEBP':
+                                    logging.info("File appears to be WebP format")
+                                else:
+                                    logging.info("File format not recognized from magic bytes")
+                        
+                        # Validate that the saved image is valid
+                        try:
+                            from PIL import Image
+                            img = Image.open(output_path)
+                            img.verify()  # Verify it's a valid image
+                            logging.info(f"Image saved and verified: {output_path}")
+                            return os.path.abspath(output_path)
+                        except Exception as verify_error:
+                            logging.error(f"Generated image is invalid: {verify_error}")
+                            # Remove the invalid file
+                            if os.path.exists(output_path):
+                                os.remove(output_path)
+                            raise Exception("Generated image is invalid")
+                    else:
+                        # If no image in response, log error
+                        logging.error("No image generated in response")
+                        if retry == max_retries:
+                            raise Exception("Failed to generate image after retries")
+                else:
+                    # If no image in response, log error
+                    logging.error("No image generated in response")
+                    if retry == max_retries:
+                        raise Exception("Failed to generate image after retries")
+                if retry == max_retries:
+                    raise Exception("Failed to generate image after retries")
+                    
+            except Exception as e:
+                logging.error(f"Error on attempt {retry+1}: {e}")
+                if retry == max_retries:
+                    raise
+            
     except Exception as e:
-        logging.error(f"Error creating mask: {e}")
-        return None
+        logging.error(f"Error using Gemini API: {e}")
+        raise
 
-def generate_keyframe(prompt, output_path, model_name, imageRouter_api_key=None, stability_api_key=None, openai_api_key=None, input_image_path=None, mask_path=None, size=None, create_mask=False):
+def generate_keyframe(prompt, output_path, model_name, imageRouter_api_key=None, stability_api_key=None, openai_api_key=None, gemini_api_key=None, input_image_path=None, mask_path=None, size=None, create_mask=False, reference_images_dir=None, max_retries=3):
     """Wrapper function to generate a keyframe using the appropriate API"""
     # Import Colors class for colored output
     from pipeline import Colors
@@ -470,8 +625,30 @@ def generate_keyframe(prompt, output_path, model_name, imageRouter_api_key=None,
     
     logging.info(f"Generating image with model: {model_name}")
     
+    # Check if we should use Gemini API (supports I2I)
+    if gemini_api_key and "gemini" in model_name.lower():
+        # Use Gemini for I2I if we have reference images or input image
+        if reference_images_dir or input_image_path:
+            return generate_keyframe_with_gemini(
+                prompt=prompt,
+                output_path=output_path,
+                gemini_api_key=gemini_api_key,
+                input_image_path=input_image_path,
+                reference_images_dir=reference_images_dir,
+                model_name=model_name,
+                max_retries=max_retries
+            )
+        # Use Gemini for T2I if no reference images provided
+        else:
+            return generate_keyframe_with_gemini(
+                prompt=prompt,
+                output_path=output_path,
+                gemini_api_key=gemini_api_key,
+                model_name=model_name,
+                max_retries=max_retries
+            )
     # Use OpenAI if specified and API key is provided
-    if "openai" in model_name.lower() and openai_api_key:
+    elif "openai" in model_name.lower() and openai_api_key:
         # Default size for OpenAI's gpt-image-1 is 1536x1024
         openai_size = size or "1536x1024"
         
@@ -502,27 +679,37 @@ def generate_keyframe(prompt, output_path, model_name, imageRouter_api_key=None,
             size=openai_size
         )
     
-    # Use Stability AI if API key is provided
-    elif stability_api_key:
+    # Use Stability AI if specifically requested
+    elif stability_api_key and ("stability" in model_name.lower() or "sd" in model_name.lower()):
         return generate_keyframe_with_stability(prompt, output_path, stability_api_key, input_image_path)
     
-    # Fall back to ImageRouter if that API key is provided
-    elif imageRouter_api_key:
+    # Use ImageRouter if specified
+    elif imageRouter_api_key and "imagerouter" in model_name.lower():
         return generate_keyframe_with_imageRouter(prompt, output_path, model_name, imageRouter_api_key)
     
-    # No valid API keys
+    # Final fallback - use Stability AI if available and no specific API was requested
+    elif stability_api_key:
+        logging.warning(f"Model '{model_name}' not recognized or no API key available, using Stability AI as fallback")
+        return generate_keyframe_with_stability(prompt, output_path, stability_api_key, input_image_path)
+    
+    # No valid API keys or routing found
     else:
         api_services = []
-        if not openai_api_key and "openai" in model_name.lower():
+        if "openai" in model_name.lower() and not openai_api_key:
             api_services.append("OpenAI")
-        if not stability_api_key:
+        if "gemini" in model_name.lower() and not gemini_api_key:
+            api_services.append("Gemini")
+        if ("stability" in model_name.lower() or "sd" in model_name.lower()) and not stability_api_key:
             api_services.append("Stability AI")
-        if not imageRouter_api_key:
+        if "imagerouter" in model_name.lower() and not imageRouter_api_key:
             api_services.append("ImageRouter")
             
-        raise ValueError(f"API key required but not provided for services: {', '.join(api_services)}.")
+        if api_services:
+            raise ValueError(f"API key required but not provided for services: {', '.join(api_services)}.")
+        else:
+            raise ValueError(f"Model '{model_name}' not supported. Supported models contain: gemini, openai, stability, sd, imagerouter.")
 
-def generate_keyframes_from_json(json_file, output_dir, model_name=None, imageRouter_api_key=None, stability_api_key=None, openai_api_key=None, initial_image_path=None, image_size=None):
+def generate_keyframes_from_json(json_file, output_dir, model_name=None, imageRouter_api_key=None, stability_api_key=None, openai_api_key=None, gemini_api_key=None, initial_image_path=None, image_size=None, reference_images_dir=None, max_retries=3):
     """Generate all keyframes sequentially from a JSON file with prompt data for character consistency"""
     
     # Load the JSON file
@@ -601,10 +788,13 @@ def generate_keyframes_from_json(json_file, output_dir, model_name=None, imageRo
                     imageRouter_api_key=imageRouter_api_key,
                     stability_api_key=stability_api_key,
                     openai_api_key=openai_api_key,
+                    gemini_api_key=gemini_api_key,
                     input_image_path=prev_image_path,
                     mask_path=None,
                     size=image_size,
-                    create_mask=False
+                    create_mask=False,
+                    reference_images_dir=reference_images_dir,
+                    max_retries=max_retries
                 )
             else:
                 # For first keyframe, use initial image if provided
@@ -619,10 +809,12 @@ def generate_keyframes_from_json(json_file, output_dir, model_name=None, imageRo
                     imageRouter_api_key=imageRouter_api_key,
                     stability_api_key=stability_api_key,
                     openai_api_key=openai_api_key,
+                    gemini_api_key=gemini_api_key,
                     input_image_path=initial_input,
-                    mask_path=None,
                     size=image_size,
-                    create_mask=False
+                    create_mask=False,
+                    reference_images_dir=reference_images_dir,
+                    max_retries=max_retries
                 )
             
             generated_files.append(generated_file)
@@ -655,6 +847,7 @@ def main():
     single_parser.add_argument("--imageRouter-api-key", help="ImageRouter API key")
     single_parser.add_argument("--stability-api-key", help="Stability AI API key")
     single_parser.add_argument("--input-image", help="Input image for image-to-image generation")
+    single_parser.add_argument("--max-retries", type=int, default=3, help="Maximum number of retries for API calls")
     
     # Batch generation from JSON
     batch_parser = subparsers.add_parser("batch", help="Generate keyframes from a JSON file")
@@ -664,6 +857,7 @@ def main():
     batch_parser.add_argument("--imageRouter-api-key", help="ImageRouter API key")
     batch_parser.add_argument("--stability-api-key", help="Stability AI API key")
     batch_parser.add_argument("--initial-image", help="Initial image to start the sequential generation")
+    batch_parser.add_argument("--max-retries", type=int, default=3, help="Maximum number of retries for API calls")
     
     args = parser.parse_args()
     
@@ -678,7 +872,8 @@ def main():
             input_image_path=args.input_image,
             mask_path=None,
             size=None,
-            create_mask=False
+            create_mask=False,
+            max_retries=args.max_retries
         )
     elif args.command == "batch":
         generate_keyframes_from_json(
@@ -687,7 +882,8 @@ def main():
             args.model, 
             args.imageRouter_api_key, 
             args.stability_api_key, 
-            args.initial_image
+            args.initial_image,
+            max_retries=args.max_retries
         )
     else:
         parser.print_help()

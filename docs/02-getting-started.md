@@ -105,7 +105,7 @@ The pipeline is configured through `pipeline_config.yaml`, which you must create
 
 **Generation Parameters:**
 - `segment_duration_seconds`: Duration of each video segment
-- `text_to_image_model`: Choose between `"openai/gpt-image-1"` or `"stabilityai/sd3:stable"`
+- `image_generation_model`: Choose between `"openai/gpt-image-1"` or `"stabilityai/sd3:stable"`
 
 *Source: [`pipeline_config.yaml.sample`](../pipeline_config.yaml.sample)*
 
