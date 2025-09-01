@@ -1,0 +1,116 @@
+# Multi-stage Dockerfile for TTV Pipeline API with HTTP/3 support
+# This Dockerfile creates optimized images for API server and workers
+
+# Base stage with common dependencies
+FROM python:3.11-slim as base
+
+# Set environment variables for Python
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    VIRTUAL_ENV="/app/.venv" \
+    PATH="/app/.venv/bin:$PATH"
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    curl \
+    ffmpeg \
+    libsm6 \
+    libxext6 \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create app user for security
+RUN groupadd -r app && useradd -r -g app app
+
+# Set working directory
+WORKDIR /app
+
+# Install UV for faster dependency management
+RUN pip install uv
+
+# Copy dependency files
+COPY pyproject.toml ./
+
+# Create virtual environment and install dependencies
+RUN uv venv .venv --python /usr/local/bin/python3 && \
+    uv pip install .
+
+# Development stage
+FROM base as development
+
+# Install development dependencies
+RUN uv pip install \
+    pytest>=8.0.0 \
+    pytest-asyncio>=0.23.0 \
+    pytest-trio>=0.8.0 \
+    pytest-cov>=4.0.0 \
+    black>=23.0.0 \
+    isort>=5.12.0 \
+    mypy>=1.7.0 \
+    ruff>=0.1.0
+
+# Copy source code
+COPY . .
+
+# Change ownership to app user
+RUN chown -R app:app /app
+USER app
+
+# Expose ports (HTTP and QUIC)
+EXPOSE 8000 8443/udp
+
+# Development command with hot reload
+CMD ["python", "-m", "api.server", "--environment", "development", "--reload"]
+
+# Production base stage
+FROM base as production-base
+
+# Copy source code (excluding large files via .dockerignore)
+COPY . .
+
+# Remove development files and clean up
+RUN rm -rf tests/ examples/ docs/ .git/ .pytest_cache/ __pycache__/ \
+    && find . -type f -name "*.pyc" -delete \
+    && find . -type d -name "__pycache__" -delete \
+    && find . -name "*.mp4" -delete \
+    && find . -name "*.pdf" -delete
+
+# Change ownership to app user (only for necessary files)
+RUN chown -R app:app /app
+USER app
+
+# API server production stage
+FROM production-base as api
+
+# Expose ports (HTTP and QUIC)
+EXPOSE 8000 8443/udp
+
+# Health check for API server
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:8000/healthz || exit 1
+
+# Production command for API server (environment can be overridden via ENVIRONMENT env var)
+CMD ["python", "-m", "api.server"]
+
+# Worker stage for job processing
+FROM production-base as worker
+
+# Workers don't need to expose HTTP ports
+# Health check for worker (check Redis connection)
+HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
+    CMD python -c "import redis; r=redis.Redis(host='redis', port=6379); r.ping()" || exit 1
+
+# Worker command
+CMD ["python", "-m", "rq.cli", "worker", "--url", "redis://redis:6379", "video_generation"]
+
+# GPU worker stage for GPU-accelerated processing
+FROM production-base as gpu-worker
+
+# Install additional GPU dependencies if needed
+RUN uv pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+
+# GPU worker command with GPU queue
+CMD ["python", "-m", "rq.cli", "worker", "--url", "redis://redis:6379", "gpu"]

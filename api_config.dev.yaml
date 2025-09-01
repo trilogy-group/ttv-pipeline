@@ -1,0 +1,29 @@
+# Development configuration for TTV Pipeline API
+# This file provides API-specific settings for development
+
+server:
+  host: "0.0.0.0"
+  port: 8000
+  quic_port: 8443
+  workers: 1
+  cors_origins:
+    - "http://localhost:3000"
+    - "http://localhost:8080"
+    - "https://localhost:3000"
+    - "https://localhost:8080"
+
+redis:
+  host: "localhost"
+  port: 6379
+  db: 0
+  password: null
+
+gcs:
+  bucket: "ttv-api-dev"
+  prefix: "dev"
+  credentials_path: "./credentials/gcs-dev-key.json"
+  signed_url_expiration: 3600
+
+security:
+  auth_token: null  # No auth for development
+  rate_limit_per_minute: 120  # Higher limit for development

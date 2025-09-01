@@ -1,0 +1,146 @@
+# Docker Compose override for production deployment
+# Usage: docker-compose -f docker-compose.yml -f docker-compose.prod.yml up
+
+services:
+  # Production API server with optimizations
+  api:
+    build:
+      target: api
+    environment:
+      - API_WORKERS=4
+      - LOG_LEVEL=INFO
+      - ENVIRONMENT=production
+    deploy:
+      resources:
+        limits:
+          cpus: '4.0'
+          memory: 4G
+        reservations:
+          cpus: '2.0'
+          memory: 2G
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+        window: 120s
+    # Don't expose ports directly in production (use Nginx proxy)
+    ports: []
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Production workers with resource limits
+  worker:
+    build:
+      target: worker
+    environment:
+      - LOG_LEVEL=INFO
+      - ENVIRONMENT=production
+      - WORKER_CONCURRENCY=2
+    deploy:
+      replicas: 4
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 4G
+        reservations:
+          cpus: '1.0'
+          memory: 2G
+      restart_policy:
+        condition: on-failure
+        delay: 10s
+        max_attempts: 3
+        window: 120s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # GPU workers for production
+  gpu-worker:
+    build:
+      target: gpu-worker
+    environment:
+      - LOG_LEVEL=INFO
+      - ENVIRONMENT=production
+      - NVIDIA_VISIBLE_DEVICES=all
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          memory: 8G
+        reservations:
+          memory: 4G
+      restart_policy:
+        condition: on-failure
+        delay: 15s
+        max_attempts: 2
+        window: 300s
+    runtime: nvidia
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    profiles:
+      - gpu
+
+  # Production Nginx proxy
+  nginx:
+    environment:
+      - NGINX_ENTRYPOINT_QUIET_LOGS=1
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.5'
+          memory: 256M
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+        window: 60s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "3"
+
+  # Production Redis with persistence
+  redis:
+    environment:
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+        window: 60s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "3"
+    # Don't expose Redis port in production
+    ports: []
+
+  # Disable debug services in production
+  redis-commander:
+    profiles:
+      - never  # Never start in production
+
+  file-server:
+    profiles:
+      - never  # Never start in production

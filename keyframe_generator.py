@@ -523,28 +523,21 @@ def generate_keyframe_with_gemini(
                     if image_parts:
                         # Select the part with the largest data (most likely to be the actual image)
                         selected_part = max(image_parts, key=lambda p: len(p.inline_data.data))
-                        logging.info(f"Selected part with data length: {len(selected_part.inline_data.data)}")
                         
                         # Save the generated image
                         image_data = selected_part.inline_data.data
-                        logging.info(f"Raw image data length: {len(image_data)}")
-                        
-                        # Log the first 100 characters of the data for debugging
-                        logging.info(f"First 100 chars of image data: {str(image_data)[:100]}")
                         
                         # Check if image_data is already bytes or needs base64 decoding
                         if isinstance(image_data, str):
                             # If it's a string, assume it's base64 encoded
                             try:
                                 image_bytes = base64.b64decode(image_data)
-                                logging.info(f"Decoded image bytes length: {len(image_bytes)}")
                             except Exception as decode_error:
                                 logging.error(f"Failed to decode base64 image data: {decode_error}")
                                 raise
                         elif isinstance(image_data, bytes):
                             # If it's already bytes, use it directly
                             image_bytes = image_data
-                            logging.info(f"Image data is already bytes, length: {len(image_bytes)}")
                         else:
                             logging.error(f"Unexpected image data type: {type(image_data)}")
                             raise Exception(f"Unexpected image data type: {type(image_data)}")
@@ -555,24 +548,6 @@ def generate_keyframe_with_gemini(
                         # Save the image
                         with open(output_path, "wb") as f:
                             f.write(image_bytes)
-                        
-                        # Log first few bytes of the saved file for debugging
-                        with open(output_path, "rb") as f:
-                            first_bytes = f.read(20)
-                            logging.info(f"First 20 bytes of saved file: {first_bytes}")
-                            
-                            # Try to determine file type from magic bytes
-                            if len(first_bytes) >= 8:
-                                if first_bytes.startswith(b'\x89PNG\r\n\x1a\n'):
-                                    logging.info("File appears to be PNG format")
-                                elif first_bytes.startswith(b'\xff\xd8\xff'):
-                                    logging.info("File appears to be JPEG format")
-                                elif first_bytes.startswith(b'GIF87a') or first_bytes.startswith(b'GIF89a'):
-                                    logging.info("File appears to be GIF format")
-                                elif first_bytes.startswith(b'RIFF') and first_bytes[8:12] == b'WEBP':
-                                    logging.info("File appears to be WebP format")
-                                else:
-                                    logging.info("File format not recognized from magic bytes")
                         
                         # Validate that the saved image is valid
                         try:
@@ -621,7 +596,7 @@ def generate_keyframe(prompt, output_path, model_name, imageRouter_api_key=None,
     
     # Set default model if none provided
     if model_name is None:
-        model_name = "stabilityai/sdxl-turbo:free"
+        model_name = "gemini-2.5-flash-image-preview"
     
     logging.info(f"Generating image with model: {model_name}")
     
@@ -717,23 +692,9 @@ def generate_keyframes_from_json(json_file, output_dir, model_name=None, imageRo
         data = json.load(f)
     
     # IMPORTANT: Ensure we don't nest directories - strip any potential nested paths
-    # If output_dir is 'output/frames/frames', simplify to just 'output/frames'
-    base_dir = os.getcwd()
-    if 'output' in output_dir:
-        parts = output_dir.split('output')
-        if len(parts) > 1:
-            # Use just the first path after 'output'
-            path_parts = parts[1].strip('/').split('/')
-            if path_parts and path_parts[0] == 'frames':
-                # Use only the simple path: output/frames
-                output_dir = os.path.join(base_dir, "output", "frames")
-            else:
-                output_dir = os.path.join(base_dir, "output", "frames")
-        else:
-            output_dir = os.path.join(base_dir, "output", "frames")
-    else:
-        # Default to a simple directory
-        output_dir = os.path.join(base_dir, "output", "frames")
+    # Use the output_dir as provided - it should already be the correct path
+    # Ensure the directory exists
+    os.makedirs(output_dir, exist_ok=True)
     
     # Force a clean start
     if os.path.exists(output_dir):

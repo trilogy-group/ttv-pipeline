@@ -1,0 +1,34 @@
+# API Server Dependencies
+# Core FastAPI and ASGI server
+fastapi>=0.104.0
+hypercorn[h3]>=0.16.0  # ASGI server with HTTP/3 support
+uvicorn>=0.24.0    # Alternative ASGI server for development
+
+# CLI interface
+click>=8.1.0
+
+# Pydantic for data validation
+pydantic>=2.5.0
+
+# Redis and job queue
+redis>=5.0.0
+rq>=1.15.0
+
+# Google Cloud Storage
+google-cloud-storage>=2.10.0
+
+# Structured concurrency
+trio>=0.23.0
+
+# HTTP client for testing
+httpx>=0.25.0
+
+# YAML configuration
+PyYAML>=6.0
+
+# Logging and monitoring
+structlog>=23.2.0
+
+# Development dependencies
+pytest>=7.4.0
+pytest-asyncio>=0.21.0

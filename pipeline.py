@@ -26,9 +26,10 @@ from generators.factory import create_video_generator, get_fallback_generator
 from video_generator_interface import VideoGenerationError, APIError, GenerationTimeoutError, InvalidInputError, QuotaExceededError
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Union
 from pydantic import BaseModel
 from instructor import from_openai, Mode
+from api.config_merger import ConfigMerger
 
 def load_config(config_path: str) -> dict:
     """Load configuration from YAML file"""
@@ -176,12 +177,13 @@ class PromptEnhancer:
 
     def __init__(self, api_key: str, base_url: str, model: str):
         # Initialize OpenAI client
+        from openai import OpenAI
         base_client = OpenAI(api_key=api_key, base_url=base_url)
         # Wrap OpenAI client for structured JSON outputs
         self.client = from_openai(base_client, mode=Mode.TOOLS_STRICT)
         self.model = model
 
-    def enhance(self, instructions: str, prompt: str, max_tokens: int = 65536) -> Dict:
+    def enhance(self, instructions: str, prompt: str, max_tokens: int = 16384) -> Dict:
         """Enhance a prompt using OpenAI and return structured output"""
         try:
             result = self.client.chat.completions.create(
@@ -221,7 +223,7 @@ def run_command(cmd: List[str], cwd: str = None) -> str:
         raise
 
 def generate_keyframes(
-    keyframe_prompts: List[str],
+    keyframe_prompts: List[Union[str, Dict]],
     config: Dict,
     output_dir: str,
     model_name: str = None,
@@ -246,7 +248,16 @@ def generate_keyframes(
     temp_json_path = os.path.join(output_dir, "keyframe_prompts.json")
     with open(temp_json_path, 'w') as f:
         import json
-        json.dump({"keyframe_prompts": keyframe_prompts}, f, indent=2)
+        # Ensure keyframe_prompts is in the correct format
+        if keyframe_prompts and isinstance(keyframe_prompts[0], str):
+            # Convert list of strings to list of dicts
+            formatted_prompts = [
+                {"segment": i+1, "prompt": prompt}
+                for i, prompt in enumerate(keyframe_prompts)
+            ]
+        else:
+            formatted_prompts = keyframe_prompts
+        json.dump({"keyframe_prompts": formatted_prompts}, f, indent=2)
 
     logging.info(f"Starting sequential keyframe generation with {len(keyframe_prompts)} frames")
 
@@ -701,22 +712,28 @@ def generate_video_segments_sequential(
     for item in video_prompts:
         seg, prompt_text = item["segment"], item["prompt"]
 
-        # For the first segment, use the initial_image if provided
-        if seg == 1 and config.get("initial_image"):
-            initial_image = config.get("initial_image")
-            # Always use absolute paths for consistency
-            if not os.path.isabs(initial_image):
-                first_file = os.path.abspath(os.path.join(os.getcwd(), initial_image))
-            else:
-                first_file = os.path.abspath(initial_image)
+        # Determine the first frame for this segment
+        if seg == 1:
+            # For the first segment, check if initial_image is provided
+            if config.get("initial_image"):
+                initial_image = config.get("initial_image")
+                # Always use absolute paths for consistency
+                if not os.path.isabs(initial_image):
+                    first_file = os.path.abspath(os.path.join(os.getcwd(), initial_image))
+                else:
+                    first_file = os.path.abspath(initial_image)
 
-            # Log the exact path and check if it exists
-            logging.info(f"Using initial image: {first_file}")
-            if not os.path.exists(first_file):
-                logging.error(f"Initial image not found at: {first_file}")
-                logging.error(f"Current directory: {os.getcwd()}")
-                logging.error(f"Directory contents: {os.listdir(os.path.dirname(first_file) if os.path.dirname(first_file) else './')}")
-                raise FileNotFoundError(f"Initial image not found: {first_file}")
+                # Log the exact path and check if it exists
+                logging.info(f"Using initial image: {first_file}")
+                if not os.path.exists(first_file):
+                    logging.error(f"Initial image not found at: {first_file}")
+                    logging.error(f"Current directory: {os.getcwd()}")
+                    logging.error(f"Directory contents: {os.listdir(os.path.dirname(first_file) if os.path.dirname(first_file) else './')}")
+                    raise FileNotFoundError(f"Initial image not found: {first_file}")
+            else:
+                # For segment 1 without initial_image, the first keyframe IS the first frame
+                first_file = os.path.join(frames_dir, f"segment_{seg:02d}.png")
+                logging.info(f"No initial image provided for segment 1, using first keyframe as both first and last frame")
         else:
             # For subsequent segments, use previous keyframe
             first_file = os.path.join(frames_dir, f"segment_{seg-1:02d}.png")
@@ -827,10 +844,12 @@ def enhance_prompt(prompt: str, config: Dict, output_dir: str) -> Dict:
         logging.warning("No OpenAI API key provided, skipping prompt enhancement")
         return {"keyframe_prompts": [], "video_prompts": []}
 
-    # Check if using Minimax backend to add character limit constraint
-    minimax_constraint = ""
+    # Check if using Minimax or Veo3 backend to add character limit constraint
+    backend_constraint = ""
     if default_backend.lower() == "minimax":
-        minimax_constraint = "\n\nIMPORTANT: When generating video prompts for Minimax backend, each video prompt must be 500 characters or less. Keep descriptions concise and focused while maintaining essential visual and action details."
+        backend_constraint = "\n\nIMPORTANT: When generating video prompts for Minimax backend, each video prompt must be 500 characters or less. Keep descriptions concise and focused while maintaining essential visual and action details."
+    elif default_backend.lower() == "veo3":
+        backend_constraint = "\n\nIMPORTANT: When generating video prompts for Veo3 backend, each video prompt must be 1000 characters or less. Keep descriptions concise and focused while maintaining essential visual and action details."
 
     try:
         # Set up the OpenAI client
@@ -844,9 +863,9 @@ def enhance_prompt(prompt: str, config: Dict, output_dir: str) -> Dict:
         client = OpenAI(**client_kwargs)
         instructor_client = from_openai(client, mode=Mode.TOOLS)
 
-        # Define the messages with potential Minimax constraint
+        # Define the messages with potential backend constraint
         messages = [
-            {"role": "system", "content": PROMPT_ENHANCEMENT_INSTRUCTIONS + minimax_constraint},
+            {"role": "system", "content": PROMPT_ENHANCEMENT_INSTRUCTIONS + backend_constraint},
             {"role": "user", "content": prompt}
         ]
 
@@ -1154,7 +1173,18 @@ def generate_video_chaining_mode(
 def run_pipeline(config_path: str, prompt_override: str = None) -> None:
     """Run the end-to-end pipeline using configuration from YAML"""
     logging.info(f"Loading configuration from {config_path}")
-    config = load_config(config_path)
+    base_config = load_config(config_path)
+
+    # Use ConfigMerger to handle prompt override with proper precedence
+    config_merger = ConfigMerger()
+    cli_args = {'prompt': prompt_override} if prompt_override else None
+    
+    # Build effective configuration with CLI prompt override
+    config = config_merger.build_effective_config(
+        base_config=base_config,
+        cli_args=cli_args,
+        http_overrides=None  # No HTTP overrides in CLI context
+    )
 
     base_dir = os.getcwd()  # Current working directory
     output_dir = os.path.join(base_dir, "output")
@@ -1177,12 +1207,12 @@ def run_pipeline(config_path: str, prompt_override: str = None) -> None:
     logging.info(f"Frames directory: {frames_dir}")
     logging.info(f"Videos directory: {videos_dir}")
 
-    # Save a copy of the configuration
+    # Save a copy of the effective configuration (after merging)
     with open(os.path.join(output_dir, 'config.yaml'), 'w') as f:
         yaml.dump(config, f)
 
     # Step 1: Enhance the input prompt
-    raw_prompt = prompt_override if prompt_override else config.get("prompt")
+    raw_prompt = config.get("prompt")
     if not raw_prompt:
         raise ValueError("No prompt provided in configuration or command line")
 
