@@ -1,0 +1,1 @@
+# Workers package for video generation jobs

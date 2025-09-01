@@ -1,0 +1,107 @@
+# Docker Compose override for local development
+# Usage: docker-compose -f docker-compose.yml -f docker-compose.dev.yml up
+
+services:
+  # Development API server with hot reload
+  api:
+    build:
+      target: development
+    environment:
+      - API_WORKERS=1
+      - LOG_LEVEL=DEBUG
+      - ENVIRONMENT=development
+    volumes:
+      # Mount source code for hot reload
+      - ./api:/app/api:ro
+      - ./workers:/app/workers:ro
+      - ./generators:/app/generators:ro
+      # Development configuration
+      - ./api_config.dev.yaml:/app/api_config.yaml:ro
+    ports:
+      - "8000:8000"
+      - "8443:8443/udp"
+    command: >
+      hypercorn api:app 
+      --bind 0.0.0.0:8000 
+      --quic-bind 0.0.0.0:8443
+      --reload
+      --access-logfile -
+      --error-logfile -
+    profiles:
+      - dev
+
+  # Development worker with hot reload
+  worker:
+    build:
+      target: development
+    environment:
+      - LOG_LEVEL=DEBUG
+      - ENVIRONMENT=development
+      - WORKER_CONCURRENCY=1
+    volumes:
+      # Mount source code for hot reload
+      - ./api:/app/api:ro
+      - ./workers:/app/workers:ro
+      - ./generators:/app/generators:ro
+      # Development configuration
+      - ./api_config.dev.yaml:/app/api_config.yaml:ro
+    deploy:
+      replicas: 1
+    profiles:
+      - dev
+
+  # Disable Nginx proxy in development (direct API access)
+  nginx:
+    profiles:
+      - nginx-dev  # Only start with explicit profile
+
+  # Redis with development settings
+  redis:
+    ports:
+      - "6379:6379"
+    environment:
+      - REDIS_PASSWORD=  # No password in development
+
+  # Redis Commander for debugging
+  redis-commander:
+    image: rediscommander/redis-commander:latest
+    environment:
+      - REDIS_HOSTS=local:redis:6379
+    ports:
+      - "8081:8081"
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - api-network
+    profiles:
+      - debug
+
+  # Development file server for local artifacts
+  file-server:
+    image: nginx:alpine
+    ports:
+      - "8082:80"
+    volumes:
+      - ./output:/usr/share/nginx/html:ro
+    profiles:
+      - debug
+
+  # Optional: Local MinIO for S3-compatible storage testing
+  minio:
+    image: minio/minio:latest
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      - MINIO_ROOT_USER=minioadmin
+      - MINIO_ROOT_PASSWORD=minioadmin
+    volumes:
+      - minio-data:/data
+    command: server /data --console-address ":9001"
+    profiles:
+      - minio
+
+volumes:
+  minio-data:
+    driver: local

@@ -1,0 +1,501 @@
+openapi: 3.0.3
+info:
+  title: TTV Pipeline API
+  description: REST API for text-to-video generation pipeline
+  version: "1.0.0"
+  contact:
+    name: TTV Pipeline Team
+servers:
+  - url: http://localhost:8000
+    description: Development server
+  - url: https://api.ttv-pipeline.com
+    description: Production server
+
+paths:
+  /:
+    get:
+      summary: Root endpoint
+      description: Returns basic API information
+      responses:
+        '200':
+          description: API information
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  name:
+                    type: string
+                    example: "TTV Pipeline API"
+                  version:
+                    type: string
+                    example: "1.0.0"
+                  description:
+                    type: string
+                    example: "REST API for text-to-video generation pipeline"
+                  docs_url:
+                    type: string
+                    example: "/docs"
+
+  /jobs:
+    post:
+      summary: Create a new video generation job
+      description: Accepts a text prompt and queues a video generation job
+      tags:
+        - jobs
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/JobCreateRequest'
+      responses:
+        '202':
+          description: Job created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobCreateResponse'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: Service unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+    get:
+      summary: List all jobs
+      description: Returns a list of all jobs with their current status
+      tags:
+        - jobs
+      parameters:
+        - name: limit
+          in: query
+          description: Maximum number of jobs to return
+          required: false
+          schema:
+            type: integer
+            default: 100
+            minimum: 1
+            maximum: 1000
+      responses:
+        '200':
+          description: List of jobs
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/JobStatusResponse'
+
+  /jobs/{job_id}:
+    get:
+      summary: Get job status
+      description: Returns the current status and details of a specific job
+      tags:
+        - jobs
+      parameters:
+        - name: job_id
+          in: path
+          required: true
+          description: Job identifier
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Job status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobStatusResponse'
+        '404':
+          description: Job not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /jobs/{job_id}/video-url:
+    get:
+      summary: Get signed video URL
+      description: Returns a time-limited signed URL for streaming or downloading the generated video
+      tags:
+        - jobs
+      parameters:
+        - name: job_id
+          in: path
+          required: true
+          description: Job identifier
+          schema:
+            type: string
+        - name: expiration_seconds
+          in: query
+          description: URL expiration time in seconds
+          required: false
+          schema:
+            type: integer
+            default: 3600
+            minimum: 60
+            maximum: 86400
+      responses:
+        '200':
+          description: Signed video URL
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  url:
+                    type: string
+                    format: uri
+                    description: Signed URL for video access
+                  expires_at:
+                    type: string
+                    format: date-time
+                    description: URL expiration timestamp
+                  content_type:
+                    type: string
+                    example: "video/mp4"
+                    description: Video content type
+        '400':
+          description: Job not completed or invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Job not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /healthz:
+    get:
+      summary: Health check
+      description: Basic liveness health check endpoint
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+
+  /readyz:
+    get:
+      summary: Readiness check
+      description: Readiness check with dependency validation
+      responses:
+        '200':
+          description: Service is ready
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+        '503':
+          description: Service not ready
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+
+  /metrics:
+    get:
+      summary: JSON metrics
+      description: Returns metrics in JSON format for programmatic access
+      responses:
+        '200':
+          description: Metrics data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EnhancedMetricsResponse'
+
+  /metrics/prometheus:
+    get:
+      summary: Prometheus metrics
+      description: Returns metrics in Prometheus format
+      responses:
+        '200':
+          description: Prometheus metrics
+          content:
+            text/plain:
+              schema:
+                type: string
+
+  /metrics/system:
+    get:
+      summary: System metrics
+      description: Comprehensive system metrics for advanced monitoring
+      responses:
+        '200':
+          description: System metrics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SystemHealthMetrics'
+
+components:
+  schemas:
+    JobStatus:
+      type: string
+      enum:
+        - queued
+        - started
+        - progress
+        - finished
+        - failed
+        - canceled
+      description: Current status of the job
+
+    JobCreateRequest:
+      type: object
+      required:
+        - prompt
+      properties:
+        prompt:
+          type: string
+          minLength: 1
+          maxLength: 2000
+          description: Text prompt for video generation
+          example: "A cat playing with a ball of yarn in a sunny garden"
+
+    JobCreateResponse:
+      type: object
+      required:
+        - id
+        - status
+        - created_at
+      properties:
+        id:
+          type: string
+          description: Unique job identifier
+          example: "job_123e4567-e89b-12d3-a456-426614174000"
+        status:
+          $ref: '#/components/schemas/JobStatus'
+        created_at:
+          type: string
+          format: date-time
+          description: Job creation timestamp
+
+    JobStatusResponse:
+      type: object
+      required:
+        - id
+        - status
+        - progress
+        - created_at
+      properties:
+        id:
+          type: string
+          description: Job identifier
+        status:
+          $ref: '#/components/schemas/JobStatus'
+        progress:
+          type: integer
+          minimum: 0
+          maximum: 100
+          description: Progress percentage (0-100)
+        created_at:
+          type: string
+          format: date-time
+          description: Job creation timestamp
+        started_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: Job start timestamp
+        finished_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: Job completion timestamp
+        gcs_uri:
+          type: string
+          nullable: true
+          description: GCS URI of generated video (when finished)
+        error:
+          type: string
+          nullable: true
+          description: Error message (when failed)
+
+    ErrorResponse:
+      type: object
+      required:
+        - error
+        - message
+        - timestamp
+      properties:
+        error:
+          type: string
+          description: Error type
+          example: "ValidationError"
+        message:
+          type: string
+          description: Human-readable error message
+          example: "Invalid prompt provided"
+        details:
+          type: object
+          nullable: true
+          description: Additional error details
+        timestamp:
+          type: string
+          format: date-time
+          description: Error timestamp
+        request_id:
+          type: string
+          nullable: true
+          description: Request correlation ID
+        retryable:
+          type: boolean
+          nullable: true
+          description: Whether the error is retryable
+
+    HealthResponse:
+      type: object
+      required:
+        - status
+        - timestamp
+        - version
+        - components
+      properties:
+        status:
+          type: string
+          enum:
+            - healthy
+            - unhealthy
+            - ready
+            - not_ready
+          description: Health status
+        timestamp:
+          type: string
+          format: date-time
+          description: Check timestamp
+        version:
+          type: string
+          description: API version
+        components:
+          type: object
+          additionalProperties:
+            type: string
+          description: Component health status
+
+    EnhancedMetricsResponse:
+      type: object
+      required:
+        - active_jobs
+        - queued_jobs
+        - total_jobs_processed
+        - average_processing_time
+        - uptime_seconds
+        - total_requests
+        - average_request_latency
+        - requests_per_second
+        - jobs_per_hour
+        - queue_depth
+        - status_code_distribution
+      properties:
+        active_jobs:
+          type: integer
+          description: Number of active jobs
+        queued_jobs:
+          type: integer
+          description: Number of queued jobs
+        total_jobs_processed:
+          type: integer
+          description: Total jobs processed since startup
+        average_processing_time:
+          type: number
+          format: float
+          description: Average job processing time in seconds
+        uptime_seconds:
+          type: integer
+          description: Server uptime in seconds
+        total_requests:
+          type: integer
+          description: Total API requests processed
+        average_request_latency:
+          type: number
+          format: float
+          description: Average request latency in seconds
+        requests_per_second:
+          type: number
+          format: float
+          description: Request throughput rate
+        jobs_per_hour:
+          type: number
+          format: float
+          description: Job processing throughput rate
+        queue_depth:
+          type: integer
+          description: Total jobs in processing pipeline
+        status_code_distribution:
+          type: object
+          additionalProperties:
+            type: integer
+          description: HTTP status code distribution
+
+    SystemHealthMetrics:
+      type: object
+      required:
+        - timestamp
+        - version
+        - system_health
+        - queue_metrics
+        - histogram_data
+        - throughput_metrics
+        - latency_metrics
+        - error_metrics
+      properties:
+        timestamp:
+          type: string
+          description: Metrics collection timestamp
+        version:
+          type: string
+          description: API version
+        system_health:
+          type: object
+          description: Component health status
+        queue_metrics:
+          type: object
+          additionalProperties:
+            type: integer
+          description: Queue depth and status metrics
+        histogram_data:
+          type: object
+          additionalProperties:
+            type: object
+            additionalProperties:
+              type: integer
+          description: Latency and duration histograms
+        throughput_metrics:
+          type: object
+          additionalProperties:
+            type: number
+          description: Request and job throughput metrics
+        latency_metrics:
+          type: object
+          additionalProperties:
+            type: number
+          description: Latency percentile metrics
+        error_metrics:
+          type: object
+          description: Error rate and failure metrics
+
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: API key for authentication (if enabled)
+
+security:
+  - {}  # No security required by default
+  - ApiKeyAuth: []  # Optional API key authentication

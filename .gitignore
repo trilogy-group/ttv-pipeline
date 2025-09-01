@@ -11,6 +11,13 @@ __pycache__/
 # Configuration files with sensitive information
 pipeline_config.yaml
 
+# Docker and deployment files
+.env
+.env.local
+credentials/
+certs/
+backup/
+
 # Build and output directories
 output/
 models/

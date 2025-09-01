@@ -1,0 +1,101 @@
+# Docker Compose configuration for TTV Pipeline API with HTTP/3 support
+version: '3.8'
+
+services:
+  # Angie edge proxy with HTTP/3 support
+  angie:
+    image: nginx/angie:latest
+    ports:
+      - "443:443/tcp"    # HTTPS
+      - "443:443/udp"    # QUIC/HTTP3
+      - "80:80/tcp"      # HTTP redirect
+    volumes:
+      - ./config/angie.conf:/etc/angie/angie.conf:ro
+      - ./certs:/etc/ssl/certs:ro
+    environment:
+      - NGINX_ENTRYPOINT_QUIET_LOGS=1
+    depends_on:
+      - api
+    networks:
+      - api-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # FastAPI application server
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+      target: production
+    environment:
+      - API_HOST=0.0.0.0
+      - API_PORT=8000
+      - API_QUIC_PORT=8443
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - GCS_BUCKET=${GCS_BUCKET:-ttv-api-artifacts}
+      - GCS_CREDENTIALS_PATH=/app/credentials/gcs-key.json
+    volumes:
+      - ./credentials:/app/credentials:ro
+      - ./pipeline_config.yaml:/app/pipeline_config.yaml:ro
+    ports:
+      - "8000:8000/tcp"   # HTTP
+      - "8443:8443/udp"   # QUIC
+    depends_on:
+      - redis
+    networks:
+      - api-network
+    restart: unless-stopped
+    command: >
+      python -m api.server 
+      --environment production 
+      --certfile /app/credentials/cert.pem 
+      --keyfile /app/credentials/key.pem
+
+  # RQ workers for job processing
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+      target: worker
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - GCS_BUCKET=${GCS_BUCKET:-ttv-api-artifacts}
+      - GCS_CREDENTIALS_PATH=/app/credentials/gcs-key.json
+    volumes:
+      - ./credentials:/app/credentials:ro
+      - ./pipeline_config.yaml:/app/pipeline_config.yaml:ro
+      - /tmp:/tmp  # For temporary video processing
+    depends_on:
+      - redis
+    networks:
+      - api-network
+    restart: unless-stopped
+    deploy:
+      replicas: 2
+
+  # Redis for job queue
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    networks:
+      - api-network
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+
+networks:
+  api-network:
+    driver: bridge
+
+volumes:
+  redis-data:
+    driver: local

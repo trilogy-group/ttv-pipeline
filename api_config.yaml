@@ -1,0 +1,30 @@
+# API Configuration for TTV Pipeline
+# This is a minimal configuration for testing
+
+api:
+  title: "TTV Pipeline API"
+  version: "1.0.0"
+  description: "Text-to-Video Pipeline API"
+  
+server:
+  host: "0.0.0.0"
+  port: 8000
+  workers: 2
+  
+cors:
+  allow_origins: ["*"]
+  allow_methods: ["GET", "POST", "PUT", "DELETE"]
+  allow_headers: ["*"]
+  
+logging:
+  level: "INFO"
+  format: "json"
+  
+redis:
+  host: "redis"
+  port: 6379
+  db: 0
+  
+gcs:
+  bucket: "ttv-api-artifacts"
+  prefix: "ttv-api"

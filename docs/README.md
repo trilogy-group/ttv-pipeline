@@ -1,174 +1,328 @@
-# TTV Pipeline Documentation
+# TTV Pipeline API Documentation
 
-This documentation was extracted from the automated analysis available at: https://deepwiki.com/trilogy-group/ttv-pipeline
+Welcome to the TTV Pipeline API documentation. This directory contains comprehensive guides for deploying, operating, and monitoring the TTV Pipeline API service.
 
-## Documentation Structure
+## Documentation Overview
 
-### 1. [Overview](01-overview.md)
-Comprehensive overview of the TTV Pipeline system, architecture, and core concepts.
+### 📚 Core Documentation
 
-### 2. [Getting Started](02-getting-started.md)
-Initial setup, installation, and basic configuration guide.
+| Document | Description | Audience |
+|----------|-------------|----------|
+| [Deployment Guide](deployment-guide.md) | Complete deployment instructions for all environments | DevOps, Developers |
+| [Operations & Monitoring](operations-monitoring.md) | Operational procedures and monitoring setup | SRE, Operations |
+| [Docker Deployment](docker-deployment.md) | Docker-specific deployment details | DevOps |
+| [HTTP/3 Setup](http3-setup.md) | HTTP/3 configuration and optimization | Network Engineers |
 
-### 3. [Core Pipeline](03-core-pipeline.md)
-Detailed explanation of the main pipeline orchestration and execution flow.
+### 🚀 Quick Start Guides
 
-### 4. [Video Generation Backends](04-video-generation-backends.md)
-Overview of the backend abstraction system supporting multiple video generation technologies.
+#### Local Development
+```bash
+# Setup development environment
+./scripts/setup-environment.sh development
 
-### 5. [Architecture and Interface](05-architecture-and-interface.md)
-Deep dive into the VideoGeneratorInterface design and factory pattern implementation.
+# Start development stack
+make dev
 
-### 6. [Local Generators](06-local-generators.md)
-Documentation for local GPU-based video generation backends.
+# Access API
+curl http://localhost:8000/healthz
+```
 
-### 7. [Remote API Generators](07-remote-api-generators.md)
-Documentation for cloud-based video generation APIs.
+#### Production Deployment
+```bash
+# Setup production environment
+./scripts/setup-environment.sh production
 
-### 8. [Deployment and Containers](08-deployment-and-containers.md)
-Deployment strategies and containerization options.
+# Configure certificates and credentials
+# (See deployment guide for details)
 
-### 9. [Reference](09-reference.md)
-API reference and technical specifications.
+# Deploy production stack
+make prod-deploy
+
+# Verify deployment
+make health ENV=prod
+```
+
+### 🛠️ Available Scripts
+
+| Script | Purpose | Usage |
+|--------|---------|-------|
+| `scripts/setup-environment.sh` | Environment setup and validation | `./scripts/setup-environment.sh [dev\|prod]` |
+| `scripts/deploy.sh` | Deployment automation | `./scripts/deploy.sh [dev\|prod] [up\|down\|restart]` |
+| `scripts/health-check.sh` | Health monitoring | `./scripts/health-check.sh [environment]` |
+| `scripts/setup-monitoring.sh` | Monitoring stack setup | `./scripts/setup-monitoring.sh [basic\|prometheus\|full]` |
+
+### 📊 Monitoring & Observability
+
+The API provides comprehensive monitoring capabilities:
+
+- **Health Endpoints**: `/healthz`, `/readyz`, `/metrics`
+- **Structured Logging**: JSON logs with correlation IDs
+- **Metrics Collection**: Prometheus-compatible metrics
+- **Alerting**: Configurable alerts for critical conditions
+- **Dashboards**: Pre-built Grafana dashboards
+
+#### Quick Monitoring Setup
+```bash
+# Setup basic monitoring
+./scripts/setup-monitoring.sh basic
+
+# Setup Prometheus + Grafana
+./scripts/setup-monitoring.sh prometheus
+
+# Setup full monitoring stack
+./scripts/setup-monitoring.sh full
+```
+
+### 🏗️ Architecture Overview
+
+```
+Client Applications
+        ↓
+   Nginx Proxy (HTTPS)
+        ↓
+   FastAPI Server
+        ↓
+    Redis Queue
+        ↓
+   RQ Workers → Google Cloud Storage
+```
+
+#### Key Components
+
+- **Nginx Proxy**: HTTP/2 edge proxy with TLS termination
+- **FastAPI Server**: API application with Hypercorn ASGI server
+- **Redis**: Job queue and metadata storage
+- **Workers**: Video generation job processors
+- **GCS**: Artifact storage and delivery
+
+### 🔧 Configuration Management
+
+#### Environment Files
+
+| File | Purpose | Environment |
+|------|---------|-------------|
+| `.env.dev` | Development configuration | Local development |
+| `.env.prod` | Production configuration | Production deployment |
+| `.env.example` | Configuration template | Reference |
+
+#### Key Configuration Areas
+
+- **API Server**: Workers, ports, logging
+- **Workers**: Scaling, concurrency, GPU support
+- **Redis**: Connection, persistence, security
+- **GCS**: Bucket, credentials, paths
+- **Security**: TLS certificates, passwords, CORS
+
+### 🚨 Troubleshooting
+
+#### Common Issues
+
+1. **Port Conflicts**
+   ```bash
+   # Check port usage
+   netstat -tulpn | grep :8000
+   
+   # Use different ports
+   API_PORT=8001 make dev
+   ```
+
+2. **Certificate Issues**
+   ```bash
+   # Verify certificates
+   openssl x509 -in certs/cert.pem -text -noout
+   
+   # Generate self-signed for testing
+   openssl req -x509 -newkey rsa:4096 -keyout certs/key.pem -out certs/cert.pem -days 365 -nodes
+   ```
+
+3. **Redis Connection Issues**
+   ```bash
+   # Test Redis connectivity
+   redis-cli -h localhost -p 6379 ping
+   
+   # Check Redis logs
+   docker compose logs redis
+   ```
+
+4. **Worker Issues**
+   ```bash
+   # Check worker status
+   docker compose ps worker
+   
+   # Monitor job queue
+   redis-cli llen rq:queue:default
+   ```
+
+#### Debug Mode
+
+Enable debug services for detailed troubleshooting:
+
+```bash
+# Start with debug services
+make debug ENV=dev
+
+# Access Redis Commander
+open http://localhost:8081
+
+# View detailed logs
+docker compose logs -f --tail=100
+```
+
+### 📈 Performance & Scaling
+
+#### Scaling Guidelines
+
+| Component | Scaling Trigger | Action |
+|-----------|----------------|--------|
+| API Server | CPU > 80% for 15min | Increase `API_WORKERS` |
+| Workers | Queue depth > 50 | Increase `WORKER_REPLICAS` |
+| Redis | Memory > 80% | Increase Redis memory limit |
+| Storage | Disk > 85% | Add storage or cleanup |
+
+#### Performance Optimization
+
+```bash
+# Scale workers
+make scale-workers REPLICAS=8
+
+# Monitor performance
+docker stats
+
+# Check queue depth
+redis-cli llen rq:queue:default
+```
+
+### 🔒 Security Considerations
+
+#### Production Security Checklist
+
+- [ ] TLS certificates configured and valid
+- [ ] Redis password set
+- [ ] GCS credentials secured (600 permissions)
+- [ ] Firewall configured (block Redis port)
+- [ ] Security headers enabled in Nginx
+- [ ] Log sanitization enabled
+- [ ] Regular security updates scheduled
+
+#### Security Best Practices
+
+1. **Credential Management**
+   ```bash
+   # Secure credential files
+   chmod 600 credentials/*
+   chown root:root credentials/
+   ```
+
+2. **Network Security**
+   ```bash
+   # Configure firewall
+   sudo ufw deny 6379  # Block Redis
+   sudo ufw allow 443  # Allow HTTPS
+   sudo ufw allow 443/udp  # Allow QUIC
+   ```
+
+3. **Container Security**
+   - Run containers as non-root user
+   - Use read-only filesystems where possible
+   - Apply security patches regularly
+
+### 🔄 Maintenance & Updates
+
+#### Regular Maintenance Tasks
+
+**Daily**:
+- Health check monitoring
+- Log review for errors
+- Resource usage monitoring
+
+**Weekly**:
+- Docker image updates
+- System cleanup
+- Configuration backup
+
+**Monthly**:
+- Security updates
+- Certificate renewal
+- Performance review
+
+#### Update Procedures
+
+```bash
+# Rolling update (zero downtime)
+docker compose pull
+docker compose up -d --force-recreate --no-deps api
+docker compose up -d --force-recreate --no-deps worker
+
+# Full restart (brief downtime)
+make restart ENV=prod
+```
+
+### 📞 Support & Resources
+
+#### Getting Help
+
+1. **Documentation**: Check relevant guides in this directory
+2. **Health Checks**: Run `./scripts/health-check.sh production`
+3. **Logs**: Check `docker compose logs` for error details
+4. **Monitoring**: Use Grafana dashboards for system insights
+
+#### Useful Commands
+
+```bash
+# Quick status check
+make status ENV=prod
+
+# View recent logs
+make logs ENV=prod
+
+# Run health checks
+make health ENV=prod
+
+# Access container shell
+docker compose exec api bash
+
+# Monitor resources
+docker stats
+
+# Check Redis queue
+redis-cli -h localhost -p 6379 llen rq:queue:default
+```
+
+#### External Resources
+
+- [Docker Documentation](https://docs.docker.com/)
+- [FastAPI Documentation](https://fastapi.tiangolo.com/)
+- [Redis Documentation](https://redis.io/documentation)
+- [Prometheus Documentation](https://prometheus.io/docs/)
+- [Grafana Documentation](https://grafana.com/docs/)
 
 ---
 
-## Quick Navigation
+## Document Index
 
-- **New Users**: Start with [Getting Started](02-getting-started.md)
-- **Developers**: Review [Architecture and Interface](05-architecture-and-interface.md)
-- **System Administrators**: See [Deployment and Containers](08-deployment-and-containers.md)
-- **API Integration**: Check [Video Generation Backends](04-video-generation-backends.md)
+### Setup & Deployment
+- [Environment Setup Script](../scripts/setup-environment.sh)
+- [Deployment Script](../scripts/deploy.sh)
+- [Docker Compose Files](../docker-compose.yml)
+- [Makefile](../Makefile)
 
-## Related Documents
+### Configuration
+- [Environment Examples](../.env.example)
+- [API Configuration](../api_config.yaml)
+- [Pipeline Configuration](../pipeline_config.yaml)
+- [Nginx Configuration](../config/nginx.conf)
+- [Redis Configuration](../config/redis.conf)
 
-- [Project README](../README.md) - Quick project overview
-- [PRD](../PRD.md) - Product Requirements Document
-- [Implementation Notes](../implementation.md) - Development progress and technical details
+### Monitoring & Operations
+- [Health Check Script](../scripts/health-check.sh)
+- [Monitoring Setup Script](../scripts/setup-monitoring.sh)
+- [Operations Guide](operations-monitoring.md)
 
-## Documentation Index
-
-### Core System
-- **[01. Overview](01-overview.md)** - System architecture, generation modes, and core components
-- **[02. Getting Started](02-getting-started.md)** - Prerequisites, installation, configuration, and first run
-- **[03. Core Pipeline](03-core-pipeline.md)** - Pipeline orchestration, execution flow, and generation modes
-
-### Video Generation Backends
-- **[04. Video Generation Backends](04-video-generation-backends.md)** - Backend architecture, types, and interface design
-- **[05. Architecture and Interface](05-architecture-and-interface.md)** - VideoGeneratorInterface, factory pattern, and backend abstraction
-- **[06. Local Generators](06-local-generators.md)** - GPU-based Wan21Generator implementation, multi-GPU support, and optimization
-- **[07. Remote API Generators](07-remote-api-generators.md)** - Runway ML and Google Veo 3 integrations, authentication, and cost management
-
-### Deployment and Reference
-- **[08. Deployment and Containers](08-deployment-and-containers.md)** - Docker configuration, FramePack integration, and container orchestration
-- **[09. Reference](09-reference.md)** - Project structure, licensing, development guidelines, and contributing
-
-## Documentation Structure
-
-### By Use Case
-
-**🚀 Getting Started**
-- New users: [Overview](01-overview.md) → [Getting Started](02-getting-started.md)
-- Developers: [Core Pipeline](03-core-pipeline.md) → [Architecture and Interface](05-architecture-and-interface.md)
-- DevOps: [Deployment and Containers](08-deployment-and-containers.md) → [Reference](09-reference.md)
-
-**⚙️ Configuration and Setup**
-- Backend selection: [Video Generation Backends](04-video-generation-backends.md)
-- Local GPU setup: [Local Generators](06-local-generators.md)
-- Cloud API integration: [Remote API Generators](07-remote-api-generators.md)
-
-**🏗️ Architecture and Development**
-- System design: [Architecture and Interface](05-architecture-and-interface.md)
-- Pipeline flow: [Core Pipeline](03-core-pipeline.md)
-- Code organization: [Reference](09-reference.md)
-
-**🚢 Deployment**
-- Container deployment: [Deployment and Containers](08-deployment-and-containers.md)
-- Production setup: [Getting Started](02-getting-started.md)
-- Resource requirements: [Local Generators](06-local-generators.md)
-
-### By Audience
-
-**👨‍💻 Developers**
-1. [Overview](01-overview.md) - Understand the system
-2. [Architecture and Interface](05-architecture-and-interface.md) - Learn the interfaces
-3. [Core Pipeline](03-core-pipeline.md) - Study the execution flow
-4. [Reference](09-reference.md) - Development guidelines
-
-**👩‍🔧 System Administrators**
-1. [Getting Started](02-getting-started.md) - Installation procedures
-2. [Deployment and Containers](08-deployment-and-containers.md) - Container setup
-3. [Local Generators](06-local-generators.md) - GPU requirements
-4. [Remote API Generators](07-remote-api-generators.md) - API configuration
-
-**🎯 End Users**
-1. [Overview](01-overview.md) - What the system does
-2. [Getting Started](02-getting-started.md) - How to set it up
-3. [Video Generation Backends](04-video-generation-backends.md) - Backend options
-
-## Key Features Documented
-
-### 🎬 Video Generation
-- **Keyframe Mode**: Single keyframe-based video generation
-- **Chaining Mode**: Multi-segment video creation with temporal continuity
-- **Backend Flexibility**: Switch between local GPU and cloud API backends
-
-### 🔧 Backend Support
-- **Local Processing**: Wan2.1 framework with multi-GPU support
-- **Cloud APIs**: Runway ML and Google Veo 3 integration
-- **Fallback System**: Automatic switching between backends on failure
-
-### 🛠️ Development Features
-- **Modular Architecture**: Clean separation of concerns
-- **Interface Abstraction**: Consistent API across all backends
-- **Configuration Management**: YAML-based configuration with templates
-- **Container Support**: Docker deployment with GPU acceleration
-
-### 📊 Monitoring and Management
-- **Cost Estimation**: Pre-generation cost calculation
-- **Progress Tracking**: Real-time generation monitoring
-- **Error Handling**: Comprehensive retry and fallback mechanisms
-- **Resource Management**: Efficient GPU and memory utilization
-
-## Getting Help
-
-### Documentation Navigation
-- Use the **Table of Contents** in each document for quick navigation
-- Follow **cross-references** between related topics
-- Check the **"Next Steps"** sections for guided learning paths
-
-### Common Questions
-- **Setup Issues**: See [Getting Started](02-getting-started.md) troubleshooting section
-- **Backend Configuration**: Refer to [Video Generation Backends](04-video-generation-backends.md)
-- **Performance Optimization**: Check [Local Generators](06-local-generators.md) performance section
-- **API Integration**: Review [Remote API Generators](07-remote-api-generators.md) authentication
-
-### Support Resources
-- **Code Examples**: Found throughout the documentation
-- **Configuration Templates**: See [`pipeline_config.yaml.sample`](../pipeline_config.yaml.sample)
-- **Error Resolution**: Each backend section includes troubleshooting guides
-- **Performance Tuning**: Optimization guidelines in relevant sections
-
-## Contributing to Documentation
-
-We welcome contributions to improve this documentation:
-
-1. **Content Updates**: Submit PRs for corrections or clarifications
-2. **New Examples**: Add practical examples and use cases
-3. **Missing Topics**: Identify and document undocovered areas
-4. **User Feedback**: Report unclear or outdated information
-
-See [Reference](09-reference.md) for detailed contributing guidelines.
+### Development
+- [Development Docker Compose](../docker-compose.dev.yml)
+- [Test Configuration](../tests/)
+- [Example Scripts](../examples/)
 
 ---
 
-## Documentation Maintenance
-
-This documentation is maintained alongside the codebase to ensure accuracy and relevance. Each document includes:
-
-- **Source References**: Links to relevant code files
-- **Last Updated**: Modification timestamps
-- **Cross-References**: Links to related documentation
-- **Code Examples**: Practical implementation examples
-
-For the most current information, always refer to the latest version of this documentation.
+*For the most up-to-date information, always refer to the individual documentation files and inline code comments.*
