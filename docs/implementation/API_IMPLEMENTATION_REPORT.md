@@ -39,11 +39,11 @@ workers/                              # Background job workers
 
 ### Configuration Files
 ```
-api_requirements.txt                  # API-specific Python dependencies
 api_config.yaml                      # API configuration template
 api_config.dev.yaml                  # Development API configuration
 pipeline_config.yaml.bak             # Backup of original pipeline config
 pyproject.toml                       # Python project configuration
+openapi.yaml                         # OpenAPI specification for API endpoints
 ```
 
 ### Docker & Deployment
@@ -220,7 +220,7 @@ pytest tests/test_worker_integration.py
 
 1. **Core API Implementation:**
    ```bash
-   git add api/ workers/ api_requirements.txt pyproject.toml
+   git add api/ workers/ pyproject.toml
    git commit -m "feat: implement TTV Pipeline API with FastAPI and RQ workers"
    ```
 

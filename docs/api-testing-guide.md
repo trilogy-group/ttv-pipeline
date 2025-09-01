@@ -71,12 +71,7 @@ curl http://localhost:8000/jobs
 curl -X POST http://localhost:8000/jobs \
   -H "Content-Type: application/json" \
   -d '{
-    "prompt": "A cat playing with a ball",
-    "generator": "minimax",
-    "parameters": {
-      "duration": 5,
-      "aspect_ratio": "16:9"
-    }
+    "prompt": "A cat playing with a ball"
   }'
 ```
 
@@ -88,6 +83,16 @@ curl http://localhost:8000/jobs/{job_id}
 **Cancel a Job:**
 ```bash
 curl -X DELETE http://localhost:8000/jobs/{job_id}
+```
+
+**Get Video URL (for completed jobs):**
+```bash
+curl http://localhost:8000/jobs/{job_id}/video-url
+```
+
+**Get Video URL with custom expiration:**
+```bash
+curl "http://localhost:8000/jobs/{job_id}/video-url?expiration_seconds=7200"
 ```
 
 ### Generator Endpoints
