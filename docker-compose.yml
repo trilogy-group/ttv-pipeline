@@ -41,13 +41,13 @@ services:
       - REDIS_PORT=6379
       - REDIS_PASSWORD=${REDIS_PASSWORD:-}
       - GCS_BUCKET=${GCS_BUCKET:-ttv-api-artifacts}
-      - GCS_CREDENTIALS_PATH=/app/credentials/gcs-key.json
       - ENVIRONMENT=${ENVIRONMENT:-production}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
     volumes:
       - ${CREDENTIALS_PATH:-./credentials}:/app/credentials:ro
       - ${PIPELINE_CONFIG_PATH:-./pipeline_config.yaml}:/app/pipeline_config.yaml:ro
       - ${API_CONFIG_PATH:-./api_config.yaml}:/app/api_config.yaml:ro
+      - ./ai-coe-454404-df4ebc146821.json:/app/ai-coe-454404-df4ebc146821.json:ro  # Mount GCS service account at same path as pipeline config expects
     ports:
       - "${API_HTTP_PORT:-8000}:8000/tcp"   # HTTP
       - "${API_QUIC_PORT:-8443}:8443/udp"   # QUIC
@@ -86,7 +86,7 @@ services:
       - ${CREDENTIALS_PATH:-./credentials}:/app/credentials:ro
       - ${PIPELINE_CONFIG_PATH:-./pipeline_config.yaml}:/app/pipeline_config.yaml:ro
       - ${API_CONFIG_PATH:-./api_config.yaml}:/app/api_config.yaml:ro
-      - ./ai-coe-454404-df4ebc146821.json:/app/credentials.json:ro  # Mount GCS service account as credentials.json
+      - ./ai-coe-454404-df4ebc146821.json:/app/ai-coe-454404-df4ebc146821.json:ro  # Mount GCS service account at same path as pipeline config expects
       - /tmp:/tmp  # For temporary video processing
     depends_on:
       redis:

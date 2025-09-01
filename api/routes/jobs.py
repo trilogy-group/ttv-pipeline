@@ -157,7 +157,7 @@ async def get_job_video_url(
         A dictionary containing the signed URL and expiration time
     """
     from api.gcs_client import create_gcs_client
-    from api.config import load_config
+    from api.config import get_config_from_env
     
     # Get job queue from app state
     job_queue = getattr(request_obj.app.state, 'job_queue', None)
@@ -170,7 +170,7 @@ async def get_job_video_url(
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
     
-    if job.status != JobStatus.COMPLETED:
+    if job.status != JobStatus.FINISHED:
         raise HTTPException(
             status_code=400, 
             detail=f"Job is not completed. Current status: {job.status}"
@@ -187,7 +187,7 @@ async def get_job_video_url(
         # Get GCS config from app state or load it
         config = getattr(request_obj.app.state, 'config', None)
         if not config:
-            config = load_config()
+            config = get_config_from_env()
         
         gcs_client = create_gcs_client(config.gcs)
         
