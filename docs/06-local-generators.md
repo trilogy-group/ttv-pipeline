@@ -227,6 +227,20 @@ def get_capabilities(self) -> Dict[str, Any]:
 
 *Sources: [`generators/local/wan21_generator.py`](../generators/local/wan21_generator.py) (lines 38-51, 57-84, 195-236)*
 
+## HunyuanVideoGenerator
+
+The `HunyuanVideoGenerator` provides local video generation using Tencent's open-source HunyuanVideo framework. It mirrors the `VideoGeneratorInterface` and runs the repository's `inference.py` script under the hood.
+
+### Configuration Parameters
+
+- **`hunyuan_dir`** – Directory containing the HunyuanVideo code
+- **`config_file`** – Path to the model configuration YAML
+- **`ckpt_path`** – Path to the pre-trained weights
+- **`sample_steps`** – Sampling steps (default: 50)
+- **`max_duration`** – Maximum generation duration
+
+*Source: [`generators/local/hunyuan_video_generator.py`](../generators/local/hunyuan_video_generator.py)*
+
 ## Performance Optimization
 
 ### GPU Memory Management
