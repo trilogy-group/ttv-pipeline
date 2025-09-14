@@ -1,0 +1,20 @@
+{
+  "enabled": true,
+  "name": "Pytest Test Runner",
+  "description": "Automatically runs pytest tests/ on file save and analyzes any test failures to suggest specific fixes",
+  "version": "1",
+  "when": {
+    "type": "fileEdited",
+    "patterns": [
+      "*.py",
+      "tests/*.py",
+      "api/*.py",
+      "generators/*.py",
+      "workers/*.py"
+    ]
+  },
+  "then": {
+    "type": "askAgent",
+    "prompt": "A Python file has been saved. Please run `pytest tests/` to execute the test suite. If any tests fail, carefully analyze the failing test output and the related source code to identify the root cause of the failures. Then provide specific, actionable suggestions for fixing each failing test, including code examples where appropriate. Focus on common issues like import errors, assertion failures, mock configuration problems, and logic errors."
+  }
+}
