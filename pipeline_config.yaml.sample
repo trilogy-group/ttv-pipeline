@@ -16,9 +16,9 @@ prompt: >
   They place their slices next to a chalkboard drawing showing 1/2 plus 1/4 equals 3/4.
   The scene ends with Milo and Pip high-fiving, with bold on-screen text "1/2 + 1/4 = 3/4!"
 
-# Backend selection (wan2.1, runway, veo3, minimax, auto)
+# Backend selection (wan2.1, runway, veo3, minimax, higgsfield, auto)
 # If set to "auto", the system will automatically select the best available backend
-default_backend: veo3
+default_backend: higgsfield
 
 # Generation mode settings (for local Wan2.1 backend)
 generation_mode: "chaining"  # Options: "keyframe" or "chaining"
