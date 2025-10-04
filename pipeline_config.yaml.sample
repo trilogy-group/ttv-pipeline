@@ -81,6 +81,16 @@ minimax:
   max_duration: 6                  # Maximum video duration in seconds (typical max for Minimax)
   base_url: "https://api.minimaxi.chat/v1"  # API base URL
 
+# Remote API configuration - Higgsfield AI
+higgsfield:
+  api_key: "YOUR_HIGGSFIELD_API_KEY"       # Required for Higgsfield (hf-api-key)
+  api_secret: "YOUR_HIGGSFIELD_API_SECRET" # Required for Higgsfield (hf-secret)
+  model: "dop-turbo"                       # Options: dop-turbo, dop-preview, dop-lite
+  base_url: "https://platform.higgsfield.ai/v1"  # API base URL
+  gcs_bucket: "YOUR_GCS_BUCKET"            # Required: GCS bucket for uploading keyframe images
+  gcs_credentials_path: "credentials.json" # Path to GCS service account credentials (defaults to google_veo credentials)
+  gcs_prefix: "higgsfield-inputs"          # GCS path prefix for uploaded images
+
 # Remote API settings (applies to all API backends)
 remote_api_settings:
   max_retries: 3            # Maximum retry attempts

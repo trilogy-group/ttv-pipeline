@@ -13,6 +13,7 @@ from generators.local.wan21_generator import Wan21Generator
 from generators.remote.runway_generator import RunwayMLGenerator
 from generators.remote.veo3_generator import Veo3Generator
 from generators.remote.minimax_generator import MinimaxGenerator
+from generators.remote.higgsfield_generator import HiggsfieldGenerator
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +23,7 @@ GENERATOR_REGISTRY = {
     "runway": RunwayMLGenerator,
     "veo3": Veo3Generator,
     "minimax": MinimaxGenerator,
+    "higgsfield": HiggsfieldGenerator,
 }
 
 
@@ -96,7 +98,7 @@ def create_video_generator(backend: str, config: Dict[str, Any]) -> VideoGenerat
             
             backend_config = {
                 "project_id": veo_config.get("project_id"),
-                "credentials_path": veo_config.get("credentials_path", "credentials.json"),
+                "credentials_path": config.get("google_credentials_path", "credentials.json"),
                 "region": veo_config.get("region", "global"),
                 "output_bucket": veo_config.get("output_bucket"),
                 "max_retries": remote_settings.get("max_retries", 3),
@@ -126,6 +128,33 @@ def create_video_generator(backend: str, config: Dict[str, Any]) -> VideoGenerat
             
             if not backend_config["api_key"]:
                 raise VideoGenerationError("Minimax API key is required but not provided")
+        
+        elif backend == "higgsfield":
+            # Higgsfield configuration
+            higgsfield_config = config.get("higgsfield", {})
+            remote_settings = config.get("remote_api_settings", {})
+            google_veo_config = config.get("google_veo", {})
+            
+            backend_config = {
+                "api_key": higgsfield_config.get("api_key"),
+                "api_secret": higgsfield_config.get("api_secret"),
+                "model": higgsfield_config.get("model", "dop-turbo"),
+                "base_url": higgsfield_config.get("base_url", "https://platform.higgsfield.ai/v1"),
+                "gcs_bucket": higgsfield_config.get("gcs_bucket"),
+                "gcs_credentials_path": higgsfield_config.get("gcs_credentials_path", 
+                                                               google_veo_config.get("credentials_path", "credentials.json")),
+                "gcs_prefix": higgsfield_config.get("gcs_prefix", "higgsfield-inputs"),
+                "max_retries": remote_settings.get("max_retries", 3),
+                "polling_interval": remote_settings.get("polling_interval", 10),
+                "timeout": remote_settings.get("timeout", 600),
+            }
+            
+            if not backend_config["api_key"]:
+                raise VideoGenerationError("Higgsfield API key is required but not provided")
+            if not backend_config["api_secret"]:
+                raise VideoGenerationError("Higgsfield API secret is required but not provided")
+            if not backend_config["gcs_bucket"]:
+                raise VideoGenerationError("Higgsfield requires a GCS bucket for image uploads")
         
         # Create the generator instance
         generator = generator_class(backend_config)

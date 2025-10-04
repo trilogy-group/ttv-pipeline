@@ -231,7 +231,7 @@ python pipeline.py --config pipeline_config.yaml
 
 ### Key Features
 
-- **Flexible Backend Support**: Choose between local Wan2.1, Runway ML API, Google Veo 3 API, or Minimax API for video generation.
+- **Flexible Backend Support**: Choose between local Wan2.1, Runway ML API, Google Veo 3 API, Minimax API, or Higgsfield AI API for video generation.
 - **Fallback System**: Configure fallback backends in case your primary choice fails.
 - **Robust Error Handling**: Automatic retries with prompt rewording for API failures.
 - **Resource Optimization**: Intelligent GPU allocation for parallel processing (local Wan2.1).
