@@ -45,17 +45,19 @@ class GCSClient:
     using existing pipeline credentials.
     """
     
-    def __init__(self, config: GCSConfig):
+    def __init__(self, config: GCSConfig, google_credentials_path: Optional[str] = None):
         """
         Initialize GCS client with configuration.
         
         Args:
-            config: GCS configuration containing bucket, credentials, etc.
+            config: GCS configuration containing bucket, etc.
+            google_credentials_path: Path to Google credentials JSON file
             
         Raises:
             GCSCredentialsError: If credentials cannot be loaded
         """
         self.config = config
+        self.google_credentials_path = google_credentials_path
         self._client = None
         self._bucket = None
         
@@ -65,16 +67,17 @@ class GCSClient:
     def _initialize_client(self):
         """Initialize the GCS client using existing pipeline credentials"""
         try:
-            # Try to use credentials from config first
-            if self.config.credentials_path and Path(self.config.credentials_path).exists():
-                logger.info(f"Using GCS credentials from: {self.config.credentials_path}")
+            # Try to use credentials from pipeline config first
+            if self.google_credentials_path and Path(self.google_credentials_path).exists():
+                logger.info(f"Using GCS credentials from: {self.google_credentials_path}")
                 self._client = storage.Client.from_service_account_json(
-                    self.config.credentials_path
+                    self.google_credentials_path
                 )
             else:
                 # Fall back to default credentials (environment variables, metadata server, etc.)
-                logger.info("Using default GCS credentials")
-                self._client = storage.Client()
+                error_msg = f"GCS credentials file not found: {self.google_credentials_path}"
+                logger.error(error_msg)
+                raise GCSCredentialsError(error_msg)
             
             # Get or create the bucket
             self._bucket = self._get_or_create_bucket()
@@ -491,12 +494,13 @@ class GCSClient:
             logger.warning(f"Failed to set up lifecycle rules: {e}")
 
 
-def create_gcs_client(config: GCSConfig) -> GCSClient:
+def create_gcs_client(config: GCSConfig, google_credentials_path: Optional[str] = None) -> GCSClient:
     """
     Factory function to create a GCS client with the given configuration.
     
     Args:
         config: GCS configuration
+        google_credentials_path: Path to Google credentials JSON file
         
     Returns:
         Initialized GCS client
@@ -505,4 +509,4 @@ def create_gcs_client(config: GCSConfig) -> GCSClient:
         GCSCredentialsError: If credentials cannot be loaded
         GCSClientError: If client initialization fails
     """
-    return GCSClient(config)
+    return GCSClient(config, google_credentials_path)

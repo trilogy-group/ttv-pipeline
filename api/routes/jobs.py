@@ -8,6 +8,7 @@ from fastapi import APIRouter, HTTPException, Request, Depends, BackgroundTasks
 from datetime import datetime, timezone, timedelta
 from typing import Optional, List
 import uuid
+import os
 
 from api.models import (
     JobCreateRequest, JobCreateResponse, JobStatusResponse,
@@ -50,9 +51,9 @@ async def create_job(
         raise HTTPException(status_code=503, detail="Job queue not available")
     
     # Create and queue the job with basic configuration
+    # Note: Don't set backend/generator here - let pipeline_config.yaml's default_backend take effect
     effective_config = {
         "prompt": request.prompt,
-        "generator": "minimax",  # Default generator
         "parameters": {}
     }
     
@@ -189,7 +190,12 @@ async def get_job_video_url(
         if not config:
             config = get_config_from_env()
         
-        gcs_client = create_gcs_client(config.gcs)
+        # Get google_credentials_path from pipeline config
+        google_credentials_path = config.pipeline_config.get('google_credentials_path')
+        if google_credentials_path and not os.path.isabs(google_credentials_path):
+            google_credentials_path = os.path.join('/app', google_credentials_path)
+        
+        gcs_client = create_gcs_client(config.gcs, google_credentials_path)
         
         signed_url = gcs_client.generate_signed_url(
             gcs_uri=job.gcs_uri,

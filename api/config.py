@@ -50,7 +50,7 @@ class GCSConfig(BaseModel):
     """Google Cloud Storage configuration"""
     bucket: str = Field(..., description="GCS bucket name for artifacts")
     prefix: str = Field(default="ttv-api", description="Path prefix for artifacts")
-    credentials_path: Optional[str] = Field(default=None, description="Path to GCS credentials JSON")
+    google_credentials_path: Optional[str] = Field(default=None, description="Path to Google credentials JSON")
     signed_url_expiration: int = Field(default=3600, description="Signed URL expiration in seconds")
     
     @field_validator('signed_url_expiration')
@@ -153,12 +153,46 @@ def load_api_config(
     
     # Extract GCS configuration from pipeline config if available
     gcs_config = {}
+    
+    # First check for root-level google_credentials_path
+    if 'google_credentials_path' in pipeline_config:
+        credentials_path = pipeline_config['google_credentials_path']
+        logger.info(f"Found google_credentials_path in pipeline config: {credentials_path}")
+        
+        # Convert relative path to absolute path if needed
+        if not os.path.isabs(credentials_path):
+            # Assume relative paths are relative to the app directory
+            credentials_path = os.path.join('/app', credentials_path)
+            logger.info(f"Converted to absolute path: {credentials_path}")
+        
+        # Check if the file exists, fallback to credentials.json if not
+        if os.path.exists(credentials_path):
+            gcs_config['google_credentials_path'] = credentials_path
+            logger.info(f"Using credentials file: {credentials_path}")
+        else:
+            fallback_path = '/app/credentials/credentials.json'
+            if os.path.exists(fallback_path):
+                gcs_config['google_credentials_path'] = fallback_path
+                logger.info(f"Primary credentials not found, using fallback: {fallback_path}")
+            else:
+                logger.warning(f"Neither primary ({credentials_path}) nor fallback ({fallback_path}) credentials found")
+    else:
+        # No google_credentials_path in config, try fallback
+        fallback_path = '/app/credentials/credentials.json'
+        if os.path.exists(fallback_path):
+            gcs_config['google_credentials_path'] = fallback_path
+            logger.info(f"No google_credentials_path in config, using fallback: {fallback_path}")
+        else:
+            logger.warning("No credentials configuration found")
+    
+    # Then check google_veo section for additional settings
     if 'google_veo' in pipeline_config:
         veo_config = pipeline_config['google_veo']
-        gcs_config = {
-            'bucket': veo_config.get('output_bucket', 'ttv-api-artifacts'),
-            'credentials_path': veo_config.get('credentials_path')
-        }
+        gcs_config['bucket'] = veo_config.get('output_bucket', 'ttv-api-artifacts')
+        
+        # Override credentials_path if specified in veo section
+        if 'credentials_path' in veo_config:
+            gcs_config['credentials_path'] = veo_config['credentials_path']
     
     # Override with API-specific GCS settings if provided
     if 'gcs' in api_settings:
@@ -203,8 +237,9 @@ def get_config_from_env() -> APIConfig:
     - REDIS_PORT: Redis port
     - REDIS_PASSWORD: Redis password
     - GCS_BUCKET: GCS bucket name
-    - GCS_CREDENTIALS_PATH: Path to GCS credentials
     - AUTH_TOKEN: Bearer token for authentication
+    
+    Note: Google credentials path is configured via pipeline_config.yaml google_credentials_path setting
     
     Returns:
         Complete APIConfig instance with environment overrides
@@ -237,8 +272,8 @@ def get_config_from_env() -> APIConfig:
     if os.getenv('GCS_BUCKET'):
         config.gcs.bucket = os.getenv('GCS_BUCKET')
     
-    if os.getenv('GCS_CREDENTIALS_PATH'):
-        config.gcs.credentials_path = os.getenv('GCS_CREDENTIALS_PATH')
+    # Use google_credentials_path from pipeline config - no environment variable overrides
+    # The credentials path should be set in pipeline_config.yaml and the file mounted appropriately
     
     if os.getenv('AUTH_TOKEN'):
         config.security.auth_token = os.getenv('AUTH_TOKEN')

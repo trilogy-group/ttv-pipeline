@@ -78,6 +78,9 @@ RUN rm -rf tests/ examples/ docs/ .git/ .pytest_cache/ __pycache__/ \
     && find . -name "*.mp4" -delete \
     && find . -name "*.pdf" -delete
 
+# Make startup script executable
+RUN chmod +x /app/start-worker-validated.sh
+
 # Change ownership to app user (only for necessary files)
 RUN chown -R app:app /app
 USER app
@@ -103,8 +106,8 @@ FROM production-base as worker
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
     CMD python -c "import redis; r=redis.Redis(host='redis', port=6379); r.ping()" || exit 1
 
-# Worker command
-CMD ["python", "-m", "rq.cli", "worker", "--url", "redis://redis:6379", "video_generation"]
+# Worker command with mandatory startup validation
+CMD ["/app/start-worker-validated.sh"]
 
 # GPU worker stage for GPU-accelerated processing
 FROM production-base as gpu-worker

@@ -195,12 +195,13 @@ class WorkerGCSUploader:
             return 0
 
 
-def create_worker_uploader(gcs_config: GCSConfig) -> Optional[WorkerGCSUploader]:
+def create_worker_uploader(gcs_config: GCSConfig, google_credentials_path: Optional[str] = None) -> Optional[WorkerGCSUploader]:
     """
     Factory function to create a worker GCS uploader.
     
     Args:
         gcs_config: GCS configuration
+        google_credentials_path: Path to Google credentials JSON file
         
     Returns:
         WorkerGCSUploader instance, or None if initialization fails
@@ -208,7 +209,7 @@ def create_worker_uploader(gcs_config: GCSConfig) -> Optional[WorkerGCSUploader]
     try:
         from api.gcs_client import create_gcs_client
         
-        gcs_client = create_gcs_client(gcs_config)
+        gcs_client = create_gcs_client(gcs_config, google_credentials_path)
         return WorkerGCSUploader(gcs_client)
         
     except Exception as e:
@@ -220,6 +221,7 @@ def upload_job_artifact(
     local_video_path: str, 
     job_id: str, 
     gcs_config: GCSConfig,
+    google_credentials_path: Optional[str] = None,
     cleanup_local: bool = False
 ) -> Optional[str]:
     """
@@ -232,12 +234,13 @@ def upload_job_artifact(
         local_video_path: Path to the local video file
         job_id: Job identifier
         gcs_config: GCS configuration
+        google_credentials_path: Path to Google credentials JSON file
         cleanup_local: Whether to delete the local file after upload
         
     Returns:
         GCS URI of the uploaded artifact, or None if upload failed
     """
-    uploader = create_worker_uploader(gcs_config)
+    uploader = create_worker_uploader(gcs_config, google_credentials_path)
     if not uploader:
         return None
     

@@ -740,10 +740,24 @@ def upload_video_to_gcs(
         # Create GCS configuration from config
         from api.config import GCSConfig
         
+        # Get google_credentials_path from pipeline config
+        google_credentials_path = config.get('google_credentials_path', 'credentials.json')
+        
+        # CRITICAL: Convert relative path to absolute path for container environment
+        if google_credentials_path and not os.path.isabs(google_credentials_path):
+            google_credentials_path = os.path.join('/app', google_credentials_path)
+        
+        # Validate credentials file exists BEFORE attempting upload
+        if not google_credentials_path or not os.path.exists(google_credentials_path):
+            error_msg = f"GCS credentials file not found at: {google_credentials_path}. Available files in /app: {os.listdir('/app')[:20]}"
+            logger.error(error_msg)
+            raise FileNotFoundError(error_msg)
+        
+        logger.info(f"Using GCS credentials file: {google_credentials_path}")
+        
         gcs_config = GCSConfig(
             bucket=config.get('gcs_bucket', 'ttv-api-artifacts'),
             prefix=config.get('gcs_prefix', 'ttv-api'),
-            credentials_path=config.get('credentials_path', 'credentials.json'),
             signed_url_expiration=config.get('signed_url_expiration', 3600)
         )
         
@@ -754,6 +768,7 @@ def upload_video_to_gcs(
             local_video_path=video_path,
             job_id=job_id,
             gcs_config=gcs_config,
+            google_credentials_path=google_credentials_path,
             cleanup_local=False  # Keep local file for now
         )
         

@@ -254,7 +254,7 @@ class HiggsfieldGenerator(VideoGeneratorInterface):
                 "prompt": prompt,
                 "input_images": [
                     {
-                        "type": "url",
+                        "type": "image_url",
                         "image_url": image_url
                     }
                 ],

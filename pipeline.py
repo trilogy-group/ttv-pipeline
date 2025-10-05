@@ -594,8 +594,8 @@ def generate_video_segments_single_keyframe(
 
     video_paths = []
 
-    # Get the video generation backend
-    backend = config.get('default_video_generation_backend', 'veo3')
+    # Get the video generation backend (use same config key as chaining mode for consistency)
+    backend = config.get('default_backend', 'wan2.1')
     logging.info(f"Using {backend} for single-keyframe video generation")
 
     # Get segment duration
