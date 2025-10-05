@@ -44,18 +44,34 @@ async def create_job(
     The job is queued for processing and can be monitored via the status endpoint.
     """
     from api.queue import JobQueue
+    from api.config import load_pipeline_config
     
     # Get job queue from app state
     job_queue: JobQueue = getattr(request_obj.app.state, 'job_queue', None)
     if not job_queue:
         raise HTTPException(status_code=503, detail="Job queue not available")
     
-    # Create and queue the job with basic configuration
+    # Load base configuration from pipeline_config.yaml
+    base_config = load_pipeline_config()
+    
+    # CRITICAL DEBUG: Log what we got from base_config
+    logger.info(f"DEBUG: base_config type: {type(base_config)}")
+    logger.info(f"DEBUG: base_config keys: {list(base_config.keys()) if isinstance(base_config, dict) else 'NOT A DICT'}")
+    logger.info(f"DEBUG: google_credentials_path in base_config: {base_config.get('google_credentials_path', 'NOT FOUND')}")
+    logger.info(f"DEBUG: gcs_bucket in base_config: {base_config.get('gcs_bucket', 'NOT FOUND')}")
+    
+    # Create and queue the job with merged configuration
+    # Start with base config to include google_credentials_path, gcs_bucket, etc.
     # Note: Don't set backend/generator here - let pipeline_config.yaml's default_backend take effect
     effective_config = {
-        "prompt": request.prompt,
+        **base_config,  # Include all base config (credentials, bucket, etc.)
+        "prompt": request.prompt,  # Override with request prompt
         "parameters": {}
     }
+    
+    # CRITICAL DEBUG: Verify merge worked
+    logger.info(f"DEBUG: effective_config has google_credentials_path: {effective_config.get('google_credentials_path', 'NOT FOUND')}")
+    logger.info(f"DEBUG: effective_config has gcs_bucket: {effective_config.get('gcs_bucket', 'NOT FOUND')}")
     
     job = job_queue.enqueue_job(
         request=request,

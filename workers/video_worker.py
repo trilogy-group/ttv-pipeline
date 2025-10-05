@@ -740,10 +740,24 @@ def upload_video_to_gcs(
         # Create GCS configuration from config
         from api.config import GCSConfig
         
-        # Get google_credentials_path from pipeline config
-        google_credentials_path = config.get('google_credentials_path', 'credentials.json')
+        # HARDCODED FIX: Read credentials path directly from pipeline_config.yaml
+        # This bypasses the broken config passing through the job queue
+        logger.info("Reading google_credentials_path directly from /app/pipeline_config.yaml")
         
-        # CRITICAL: Convert relative path to absolute path for container environment
+        pipeline_config_path = "/app/pipeline_config.yaml"
+        if os.path.exists(pipeline_config_path):
+            with open(pipeline_config_path, 'r') as f:
+                pipeline_config = yaml.safe_load(f)
+                google_credentials_path = pipeline_config.get('google_credentials_path', 'credentials.json')
+                gcs_bucket = pipeline_config.get('gcs_bucket', 'ttv-api-artifacts')
+                logger.info(f"Loaded from pipeline_config.yaml: credentials={google_credentials_path}, bucket={gcs_bucket}")
+        else:
+            # Fallback - should never happen since startup validation checks this
+            logger.warning(f"Pipeline config not found at {pipeline_config_path}, using defaults")
+            google_credentials_path = 'credentials.json'
+            gcs_bucket = 'ttv-api-artifacts'
+        
+        # Convert relative path to absolute path for container environment
         if google_credentials_path and not os.path.isabs(google_credentials_path):
             google_credentials_path = os.path.join('/app', google_credentials_path)
         
