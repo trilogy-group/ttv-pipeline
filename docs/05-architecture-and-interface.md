@@ -124,6 +124,7 @@ graph LR
     factory --> selector{Backend Type}
     
     selector --> wan2[wan2.1 Config]
+    selector --> hunyuan[hunyuan Config]
     selector --> runway[runway Config]
     selector --> veo3[veo3 Config]
     selector --> minimax[minimax Config]
@@ -133,6 +134,12 @@ graph LR
     wan2 --> i2v_model_dir[i2v_model_dir]
     wan2 --> total_gpus[total_gpus]
     wan2 --> sample_steps[sample_steps]
+
+    %% Hunyuan Configuration
+    hunyuan --> hunyuan_dir[hunyuan_dir]
+    hunyuan --> hunyuan_cfg[config_file]
+    hunyuan --> hunyuan_ckpt[ckpt_path]
+    hunyuan --> hunyuan_steps[sample_steps]
     
     %% Runway Configuration
     runway --> api_key[api_key]
