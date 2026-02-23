@@ -49,9 +49,12 @@ The `GENERATOR_REGISTRY` maps backend names to their corresponding generator cla
 ```python
 GENERATOR_REGISTRY = {
     "wan2.1": Wan21Generator,
+    "hunyuan": HunyuanVideoGenerator,
     "runway": RunwayGenerator, 
     "veo3": Veo3Generator,
-    "auto": AutoGenerator
+    "minimax": MinimaxGenerator,
+    "fal": FalGenerator,
+    "fal.ai": FalGenerator,
 }
 ```
 
@@ -82,6 +85,11 @@ The factory handles backend-specific configuration extraction, mapping general c
 - `google_veo.project_id`: GCP project identifier
 - `google_veo.credentials_path`: Path to GCP credentials
 - `google_veo.region`: GCP region for processing
+
+**fal.ai Configuration:**
+- `fal.api_key`: fal.ai API key (or `FAL_API_KEY`)
+- `fal.model`: fal model endpoint ID
+- `fal.default_input`: model-specific input defaults
 
 *Source: [`generators/factory.py`](../generators/factory.py)*
 
@@ -128,6 +136,7 @@ graph LR
     selector --> runway[runway Config]
     selector --> veo3[veo3 Config]
     selector --> minimax[minimax Config]
+    selector --> fal[fal Config]
     
     %% Wan2.1 Configuration
     wan2 --> wan2_dir[wan2_dir]
@@ -158,6 +167,12 @@ graph LR
     minimax --> minimax_model[model]
     minimax --> minimax_resolution[resolution]
     minimax --> minimax_max_duration[max_duration]
+
+    %% fal.ai Configuration
+    fal --> fal_api_key[api_key or FAL_API_KEY]
+    fal --> fal_model[model]
+    fal --> fal_base_url[base_url]
+    fal --> fal_default_input[default_input]
 ```
 
 **Configuration Mapping Logic:**

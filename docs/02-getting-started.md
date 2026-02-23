@@ -83,6 +83,7 @@ The pipeline is configured through `pipeline_config.yaml`, which you must create
    - `veo3` - Google Veo 3 API (requires GCP setup)
    - `runway` - Runway ML API (requires API key)
    - `minimax` - Minimax API (requires API key)
+   - `fal` / `fal.ai` - fal.ai model endpoint (requires API key + model)
    - `auto` - Automatic backend selection with fallback
 
 3. **Configure API keys** (for remote backends):
@@ -90,6 +91,7 @@ The pipeline is configured through `pipeline_config.yaml`, which you must create
    - **Runway ML**: Set `runway_ml.api_key`
    - **Google Veo**: Set `google_veo.project_id` and `credentials_path`
    - **Minimax**: Set `minimax.api_key` or environment variable `MINIMAX_API_KEY`
+   - **fal.ai**: Set `fal.api_key` or environment variable `FAL_API_KEY`, and set `fal.model`
    - **Stability AI**: Set `stability_api_key`
 
 *Source: [`pipeline_config.yaml.sample`](../pipeline_config.yaml.sample)*

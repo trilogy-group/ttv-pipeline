@@ -9,10 +9,11 @@ This document covers the cloud-based video generation backends that interface wi
 - [`generators/remote/runway_generator.py`](../generators/remote/runway_generator.py) - Runway ML implementation
 - [`generators/remote/veo3_generator.py`](../generators/remote/veo3_generator.py) - Google Veo 3 implementation
 - [`generators/remote/minimax_generator.py`](../generators/remote/minimax_generator.py) - Minimax I2V-01-Director implementation
+- [`generators/remote/fal_generator.py`](../generators/remote/fal_generator.py) - fal.ai provider implementation with model endpoint routing
 
 ## Overview
 
-The remote API generators implement the `VideoGeneratorInterface` to provide video generation through external cloud services. Currently supported APIs include Runway ML, Google Veo 3, and Minimax I2V-01-Director. These generators handle authentication, request/response processing, polling for completion, and cost estimation while maintaining the same interface as local generators.
+The remote API generators implement the `VideoGeneratorInterface` to provide video generation through external cloud services. Currently supported APIs include Runway ML, Google Veo 3, Minimax I2V-01-Director, and fal.ai model endpoints. These generators handle authentication, request/response processing, polling for completion, and cost estimation while maintaining the same interface as local generators.
 
 **Key Features:**
 - **Unified Interface**: Same API as local generators via `VideoGeneratorInterface`
@@ -22,6 +23,30 @@ The remote API generators implement the `VideoGeneratorInterface` to provide vid
 - **Fallback Support**: Automatic switching between API providers
 
 *Sources: [`generators/remote/__init__.py`](../generators/remote/__init__.py), [`generators/remote/runway_generator.py`](../generators/remote/runway_generator.py), [`generators/remote/veo3_generator.py`](../generators/remote/veo3_generator.py), [`generators/remote/minimax_generator.py`](../generators/remote/minimax_generator.py)*
+
+## fal.ai Generator Implementation
+
+### Provider/Model Separation
+
+The `FalGenerator` treats `fal.ai` as the provider and `fal.model` as the runtime model endpoint, so one backend can target any fal-supported video model.
+
+**Configuration highlights:**
+- `default_backend`: `"fal"` or `"fal.ai"`
+- `fal.model`: full model endpoint identifier (required)
+- `fal.api_key` or environment variable `FAL_API_KEY`
+- `fal.default_input`: optional model-specific input defaults merged into each request
+
+### Header Metrics Capture
+
+When fal response headers are present, the generator captures metrics such as:
+- `x-fal-request-id`
+- `x-compute-time`
+- `x-queue-time`
+- `x-total-cost`
+- `x-request-cost`
+- `x-generation-time`
+
+Metrics are written next to the generated file as `<output>.metrics.json`.
 
 ## Architecture Overview
 
@@ -478,6 +503,16 @@ minimax:
   base_url: "https://api.minimaxi.chat/v1"
 ```
 
+**fal.ai Configuration:**
+```yaml
+fal:
+  api_key: "YOUR_FAL_API_KEY"
+  model: "fal-ai/minimax/hailuo-02/standard/image-to-video"
+  base_url: "https://fal.run"
+  max_duration: 10
+  default_input: {}
+```
+
 *Sources: [`generators/remote/runway_generator.py`](../generators/remote/runway_generator.py) (lines 39-56), [`generators/remote/veo3_generator.py`](../generators/remote/veo3_generator.py) (lines 66-82), [`generators/remote/minimax_generator.py`](../generators/remote/minimax_generator.py) (lines 66-82)*
 
 ### Environment Variable Handling
@@ -495,6 +530,9 @@ Both generators support environment variable authentication as fallbacks:
 
 **Minimax Environment Variables:**
 - **`MINIMAX_API_KEY`**: Minimax API authentication key
+
+**fal.ai Environment Variables:**
+- **`FAL_API_KEY`**: fal.ai API authentication key
 
 **Environment Variable Priority:**
 1. Configuration file values
@@ -654,6 +692,31 @@ try:
     print(f"Video generated: {video_path}")
 except Exception as e:
     print(f"Generation failed: {e}")
+```
+
+### fal.ai Generation
+
+```python
+config = {
+    "api_key": "your_fal_api_key",
+    "model": "fal-ai/minimax/hailuo-02/standard/image-to-video",
+    "base_url": "https://fal.run",
+    "timeout": 600,
+}
+
+from generators.remote.fal_generator import FalGenerator
+generator = FalGenerator(config)
+
+video_path = generator.generate_video(
+    prompt="A cinematic drone shot over neon city streets",
+    input_image_path="input.jpg",
+    output_path="output.mp4",
+    duration=5.0,
+)
+
+# Header metrics (when present) are available in:
+# - generator.last_request_metrics
+# - output.mp4.metrics.json
 ```
 
 ---

@@ -2,7 +2,7 @@
 
 *Source: [DeepWiki Analysis](https://deepwiki.com/trilogy-group/ttv-pipeline/4-video-generation-backends)*
 
-The video generation backends system provides a unified abstraction layer for multiple video generation technologies within the TTV Pipeline. This system enables seamless switching between local GPU-based models (such as Wan2.1) and remote cloud APIs (such as Runway ML, Google Veo 3, and Minimax) through a common interface and factory pattern.
+The video generation backends system provides a unified abstraction layer for multiple video generation technologies within the TTV Pipeline. This system enables seamless switching between local GPU-based models (such as Wan2.1) and remote cloud APIs (such as Runway ML, Google Veo 3, Minimax, and fal.ai) through a common interface and factory pattern.
 
 **Key Source Files:**
 - [`generators/__init__.py`](../generators/__init__.py) - Package exports and factory function
@@ -11,7 +11,7 @@ The video generation backends system provides a unified abstraction layer for mu
 
 ## Purpose and Scope
 
-The video generation backends system provides a unified abstraction layer for multiple video generation technologies within the TTV Pipeline. This system enables seamless switching between local GPU-based models (such as Wan2.1) and remote cloud APIs (such as Runway ML, Google Veo 3, and Minimax) through a common interface and factory pattern.
+The video generation backends system provides a unified abstraction layer for multiple video generation technologies within the TTV Pipeline. This system enables seamless switching between local GPU-based models (such as Wan2.1) and remote cloud APIs (such as Runway ML, Google Veo 3, Minimax, and fal.ai) through a common interface and factory pattern.
 
 This document covers the overall backend architecture, interface design, and shared utilities. For detailed information about the interface design and factory implementation, see [Architecture and Interface](05-architecture-and-interface.md). For local GPU-based generation, see [Local Generators](06-local-generators.md). For cloud API integrations, see [Remote API Generators](07-remote-api-generators.md).
 
@@ -55,16 +55,19 @@ graph TD
         runway[RunwayMLGenerator]
         veo3[Veo3Generator]
         minimax[MinimaxGenerator]
+        fal[FalGenerator]
         
         interface --> wan2
         interface --> hunyuan
         interface --> runway
         interface --> veo3
         interface --> minimax
+        interface --> fal
         
         api_cred --> runway
         api_cred --> veo3
         api_cred --> minimax
+        api_cred --> fal
     end
     
     subgraph "Utilities"
@@ -77,6 +80,7 @@ graph TD
         runway --> retry
         veo3 --> retry
         minimax --> retry
+        fal --> retry
     end
 ```
 
@@ -119,7 +123,7 @@ The configuration system supports multiple backend types with specific settings:
 
 ```yaml
 # Default backend selection
-default_backend: "wan2.1"  # Options: wan2.1, runway, veo3, auto
+default_backend: "wan2.1"  # Options: wan2.1, hunyuan, runway, veo3, minimax, fal, fal.ai, auto
 
 # Local backend configuration
 wan2_dir: "./frameworks/Wan2.1"
@@ -132,6 +136,14 @@ runway_ml:
 google_veo:
   project_id: "${GCP_PROJECT_ID}"
   credentials_path: "${GCP_CREDENTIALS_PATH}"
+
+minimax:
+  api_key: "${MINIMAX_API_KEY}"
+  model: "I2V-01-Director"
+
+fal:
+  api_key: "${FAL_API_KEY}"
+  model: "fal-ai/minimax/hailuo-02/standard/image-to-video"
 ```
 
 ### Backend Selection Logic
@@ -183,6 +195,7 @@ Cloud-based video generation services accessed via REST APIs:
 - **Runway ML**: Industry-leading video generation with models like Gen-4 Turbo
 - **Google Veo 3**: Advanced video generation with sophisticated temporal understanding
 - **Minimax**: I2V-01-Director model for image-to-video generation with camera movement control
+- **fal.ai**: Provider-backed model endpoints with flexible model selection
 
 #### Key Features
 - **Cost Efficiency**: Pay-per-use pricing without infrastructure overhead
@@ -235,7 +248,8 @@ class VideoGeneratorInterface:
 2. **Runway ML API**: Cloud-based generation via Runway ML
 3. **Google Veo 3**: Cloud-based generation via Google's Veo 3 API
 4. **Minimax API**: Cloud-based generation via Minimax
-5. **HunyuanVideo**: Local generation using the open-source HunyuanVideo model
+5. **fal.ai API**: Cloud-based generation via fal.ai model endpoints
+6. **HunyuanVideo**: Local generation using the open-source HunyuanVideo model
 
 ### Configuration Examples
 
@@ -268,6 +282,14 @@ default_backend: "minimax"
 minimax:
   api_key: "${MINIMAX_API_KEY}"
   model: "i2v-01-director"
+```
+
+**fal.ai:**
+```yaml
+default_backend: "fal"
+fal:
+  api_key: "${FAL_API_KEY}"
+  model: "fal-ai/minimax/hailuo-02/standard/image-to-video"
 ```
 
 **HunyuanVideo:**

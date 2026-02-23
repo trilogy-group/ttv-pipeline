@@ -8,12 +8,16 @@ __pycache__/
 *.so
 .Python
 
+research
+
 # Configuration files with sensitive information
 pipeline_config.yaml
 
 # Docker and deployment files
 .env
 .env.local
+.env.dev
+.env.prod
 credentials/
 certs/
 backup/
