@@ -7,6 +7,7 @@ and request validation middleware.
 
 import json
 import time
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 import pytest
 from fastapi import FastAPI, Request
@@ -17,7 +18,8 @@ from api.middleware import (
     SecurityHeadersMiddleware,
     RequestLoggingMiddleware,
     RateLimitMiddleware,
-    RequestValidationMiddleware
+    RequestValidationMiddleware,
+    AuthTokenMiddleware
 )
 
 
@@ -69,6 +71,22 @@ class TestSecurityHeadersMiddleware:
         docs_response = client.get("/docs")
         assert "Cache-Control" not in docs_response.headers or \
                docs_response.headers["Cache-Control"] != "no-cache, no-store, must-revalidate"
+
+    def test_cache_control_for_jobs_endpoints(self):
+        """Test that cache control headers are added for /jobs endpoints."""
+        app = FastAPI()
+        app.add_middleware(SecurityHeadersMiddleware)
+
+        @app.get("/jobs/test")
+        async def jobs_endpoint():
+            return {"message": "api"}
+
+        client = TestClient(app)
+        response = client.get("/jobs/test")
+
+        assert response.headers["Cache-Control"] == "no-cache, no-store, must-revalidate"
+        assert response.headers["Pragma"] == "no-cache"
+        assert response.headers["Expires"] == "0"
 
 
 class TestRequestLoggingMiddleware:
@@ -329,3 +347,51 @@ class TestMiddlewareIntegration:
         
         # Check response content
         assert response.json()["message"] == "test"
+
+
+class TestAuthTokenMiddleware:
+    """Test auth token middleware behavior."""
+
+    def test_enforces_auth_when_token_configured(self):
+        app = FastAPI()
+        app.add_middleware(AuthTokenMiddleware)
+        app.state.config = SimpleNamespace(security=SimpleNamespace(auth_token="test-token"))
+
+        @app.get("/jobs/test")
+        async def test_endpoint():
+            return {"message": "ok"}
+
+        client = TestClient(app)
+        response = client.get("/jobs/test")
+
+        assert response.status_code == 401
+        assert response.json()["error"] == "Unauthorized"
+
+    def test_allows_request_with_valid_bearer_token(self):
+        app = FastAPI()
+        app.add_middleware(AuthTokenMiddleware)
+        app.state.config = SimpleNamespace(security=SimpleNamespace(auth_token="test-token"))
+
+        @app.get("/jobs/test")
+        async def test_endpoint():
+            return {"message": "ok"}
+
+        client = TestClient(app)
+        response = client.get("/jobs/test", headers={"Authorization": "Bearer test-token"})
+
+        assert response.status_code == 200
+        assert response.json()["message"] == "ok"
+
+    def test_skips_auth_when_token_not_configured(self):
+        app = FastAPI()
+        app.add_middleware(AuthTokenMiddleware)
+        app.state.config = SimpleNamespace(security=SimpleNamespace(auth_token=None))
+
+        @app.get("/jobs/test")
+        async def test_endpoint():
+            return {"message": "ok"}
+
+        client = TestClient(app)
+        response = client.get("/jobs/test")
+
+        assert response.status_code == 200

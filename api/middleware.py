@@ -7,6 +7,7 @@ for request processing, validation, and tracing.
 
 import json
 import logging
+import secrets
 import time
 import uuid
 from collections import defaultdict, deque
@@ -24,6 +25,11 @@ from api.models import ErrorResponse
 from api.logging_config import get_logger, log_api_request, log_api_response, log_api_error
 
 logger = get_logger(__name__)
+
+
+def _is_api_endpoint(path: str) -> bool:
+    """Check whether a path targets API job endpoints."""
+    return path.startswith("/jobs") or path.startswith("/v1/")
 
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
@@ -69,7 +75,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             )
         
         # Cache control for API responses
-        if request.url.path.startswith("/v1/"):
+        if _is_api_endpoint(request.url.path):
             response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
             response.headers["Pragma"] = "no-cache"
             response.headers["Expires"] = "0"
@@ -494,7 +500,7 @@ class HTTP3Middleware(BaseHTTPMiddleware):
         is_forwarded_https = request.headers.get("x-forwarded-proto") == "https"
         
         # Add for API endpoints
-        is_api_endpoint = request.url.path.startswith("/v1/")
+        is_api_endpoint = _is_api_endpoint(request.url.path)
         
         return (is_https or is_forwarded_https) and is_api_endpoint
     
@@ -541,3 +547,52 @@ class HTTP3Middleware(BaseHTTPMiddleware):
             return "h2c"
         
         return None
+
+
+class AuthTokenMiddleware(BaseHTTPMiddleware):
+    """Middleware for bearer token authentication on protected API routes."""
+
+    def __init__(self, app, protected_paths: Optional[Set[str]] = None):
+        super().__init__(app)
+        self.protected_paths = protected_paths or {"/jobs", "/v1/jobs"}
+
+    async def dispatch(self, request: Request, call_next: Callable) -> Response:
+        # Skip CORS preflight
+        if request.method == "OPTIONS":
+            return await call_next(request)
+
+        if not self._is_protected_path(request.url.path):
+            return await call_next(request)
+
+        auth_token = self._get_auth_token(request)
+        if not auth_token:
+            return await call_next(request)
+
+        auth_header = request.headers.get("authorization", "")
+        if not auth_header.startswith("Bearer "):
+            return self._unauthorized_response("Missing or invalid authorization header")
+
+        provided_token = auth_header[len("Bearer "):].strip()
+        if not provided_token or not secrets.compare_digest(provided_token, auth_token):
+            return self._unauthorized_response("Invalid authentication token")
+
+        return await call_next(request)
+
+    def _is_protected_path(self, path: str) -> bool:
+        return any(path.startswith(prefix) for prefix in self.protected_paths)
+
+    def _get_auth_token(self, request: Request) -> Optional[str]:
+        app_config = getattr(request.app.state, "config", None)
+        security_config = getattr(app_config, "security", None)
+        auth_token = getattr(security_config, "auth_token", None)
+        if isinstance(auth_token, str):
+            token = auth_token.strip()
+            return token or None
+        return None
+
+    def _unauthorized_response(self, message: str) -> JSONResponse:
+        return JSONResponse(
+            status_code=401,
+            content={"error": "Unauthorized", "message": message}
+        )
+

@@ -71,8 +71,14 @@ async def lifespan(app: FastAPI):
         
         if cors_middleware:
             # Update CORS origins from configuration
-            cors_middleware.kwargs["allow_origins"] = config.server.cors_origins
-            logger.info(f"CORS origins configured: {config.server.cors_origins}")
+            configured_origins = config.server.cors_origins or ["*"]
+            allow_credentials = "*" not in configured_origins
+            cors_middleware.kwargs["allow_origins"] = configured_origins
+            cors_middleware.kwargs["allow_credentials"] = allow_credentials
+            logger.info(
+                f"CORS origins configured: {configured_origins}, "
+                f"allow_credentials={allow_credentials}"
+            )
         
         # Update rate limiting from configuration
         rate_limit_middleware = None
@@ -144,11 +150,15 @@ def setup_middleware(app: FastAPI):
         RequestLoggingMiddleware, 
         RateLimitMiddleware,
         RequestValidationMiddleware,
-        HTTP3Middleware
+        HTTP3Middleware,
+        AuthTokenMiddleware
     )
     
     # Request validation middleware (first in chain)
     app.add_middleware(RequestValidationMiddleware, max_content_length=10 * 1024 * 1024)
+
+    # Token authentication middleware (enforced only when AUTH_TOKEN is configured)
+    app.add_middleware(AuthTokenMiddleware)
     
     # Rate limiting middleware
     app.add_middleware(
@@ -179,7 +189,7 @@ def setup_middleware(app: FastAPI):
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],  # Will be updated from config in startup
-        allow_credentials=True,
+        allow_credentials=False,
         allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
         allow_headers=["*"],
     )
