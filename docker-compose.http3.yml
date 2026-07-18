@@ -1,6 +1,4 @@
 # Docker Compose configuration for TTV Pipeline API with HTTP/3 support
-version: '3.8'
-
 services:
   # Angie edge proxy with HTTP/3 support
   angie:
@@ -39,9 +37,10 @@ services:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - GCS_BUCKET=${GCS_BUCKET:-ttv-api-artifacts}
-      - GCS_CREDENTIALS_PATH=/app/credentials/gcs-key.json
+      - GCS_CREDENTIALS_PATH=/app/credentials/credentials.json
     volumes:
       - ./credentials:/app/credentials:ro
+      - ./certs:/app/certs:ro
       - ./pipeline_config.yaml:/app/pipeline_config.yaml:ro
     ports:
       - "8000:8000/tcp"   # HTTP
@@ -54,8 +53,8 @@ services:
     command: >
       python -m api.server 
       --environment production 
-      --certfile /app/credentials/cert.pem 
-      --keyfile /app/credentials/key.pem
+      --certfile /app/certs/cert.pem
+      --keyfile /app/certs/key.pem
 
   # RQ workers for job processing
   worker:
@@ -67,7 +66,7 @@ services:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - GCS_BUCKET=${GCS_BUCKET:-ttv-api-artifacts}
-      - GCS_CREDENTIALS_PATH=/app/credentials/gcs-key.json
+      - GCS_CREDENTIALS_PATH=/app/credentials/credentials.json
     volumes:
       - ./credentials:/app/credentials:ro
       - ./pipeline_config.yaml:/app/pipeline_config.yaml:ro

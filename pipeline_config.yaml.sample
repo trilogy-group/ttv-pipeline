@@ -77,7 +77,7 @@ runway_ml:
 # Remote API configuration - Google Veo 3
 google_veo:
   project_id: "YOUR_GCP_PROJECT_ID"      # Required for Veo 3
-  credentials_path: "credentials.json"   # Path to service account credentials
+  credentials_path: "credentials/credentials.json"  # Path to service account credentials
   region: "us-central1"
   veo_model: "veo-3.0-generate-preview"  # Veo 3
 #  output_bucket: "your-output-bucket"    # Optional: GCS bucket for outputs

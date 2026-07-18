@@ -273,7 +273,7 @@ WORKER_CONCURRENCY=1            # Jobs per worker
 
 # GCS settings (optional for basic testing)
 GCS_BUCKET=ttv-api-artifacts
-GCS_CREDENTIALS_PATH=/app/credentials/gcs-key.json
+GCS_CREDENTIALS_PATH=/app/credentials/credentials.json
 ```
 
 ## Next Steps

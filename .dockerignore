@@ -34,6 +34,16 @@ coverage.xml
 .vscode/
 .idea/
 
+# Local secrets (mounted at runtime, never copied into images)
+.env
+.env.*
+pipeline_config.yaml
+credentials/
+certs/
+*credentials*.json
+ai-coe-*.json
+*.pem
+
 # Test files
 tests/
 examples/

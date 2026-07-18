@@ -19,7 +19,7 @@ Successfully implemented Google Cloud Storage integration for the API server, pr
 ## Key Features Implemented
 
 ### 1. GCS Client Initialization ✅
-- **Credential Management**: Uses existing pipeline credentials from `ai-coe-454404-df4ebc146821.json`
+- **Credential Management**: Uses credentials mounted under the ignored `credentials/` directory
 - **Fallback Support**: Falls back to default credentials if file not found
 - **Bucket Management**: Automatically creates bucket if it doesn't exist
 - **Error Handling**: Comprehensive error handling with custom exceptions
@@ -52,7 +52,7 @@ The implementation seamlessly integrates with the existing configuration system:
 # From pipeline_config.yaml - automatically detected
 google_veo:
   project_id: "ai-coe-454404"
-  credentials_path: "ai-coe-454404-df4ebc146821.json"
+  credentials_path: "credentials/credentials.json"
   # output_bucket: "custom-bucket"  # Optional override
 
 # From api_config.yaml - API-specific settings

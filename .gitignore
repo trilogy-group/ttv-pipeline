@@ -21,6 +21,9 @@ pipeline_config.yaml
 credentials/
 certs/
 backup/
+*credentials*.json
+ai-coe-*.json
+*.pem
 
 # Build and output directories
 output/
