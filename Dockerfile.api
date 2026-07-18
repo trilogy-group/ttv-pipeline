@@ -2,7 +2,7 @@
 # This Dockerfile creates optimized images for API server and workers
 
 # Base stage with common dependencies
-FROM python:3.14-slim as base
+FROM python:3.14-slim AS base
 
 # Set environment variables for Python
 ENV PYTHONUNBUFFERED=1 \
@@ -33,12 +33,13 @@ RUN pip install uv
 
 # Copy locked dependency metadata first for cacheable installs
 COPY pyproject.toml uv.lock ./
+COPY pipeline_config.yaml.sample pipeline_config.yaml
 
 # Install locked runtime dependencies; the project itself is copied later.
 RUN uv sync --frozen --no-dev --no-install-project
 
 # Development stage
-FROM base as development
+FROM base AS development
 
 # Copy source code
 COPY . .
@@ -57,7 +58,7 @@ EXPOSE 8000 8443/udp
 CMD ["python", "-m", "api.server", "--environment", "development", "--reload"]
 
 # Production base stage
-FROM base as production-base
+FROM base AS production-base
 
 # Copy source code (excluding large files via .dockerignore)
 COPY . .
@@ -77,7 +78,7 @@ RUN chown -R app:app /app
 USER app
 
 # API server production stage
-FROM production-base as api
+FROM production-base AS api
 
 # Expose ports (HTTP and QUIC)
 EXPOSE 8000 8443/udp
@@ -90,21 +91,21 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
 CMD ["python", "-m", "api.server"]
 
 # Worker stage for job processing
-FROM production-base as worker
+FROM production-base AS worker
 
 # Workers don't need to expose HTTP ports
 # Health check for worker (check Redis connection)
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
-    CMD python -c "import redis; r=redis.Redis(host='redis', port=6379); r.ping()" || exit 1
+    CMD python -c "import os, redis; redis.Redis(host='redis', port=6379, password=os.getenv('REDIS_PASSWORD') or None).ping()" || exit 1
 
 # Worker command
-CMD ["python", "-m", "rq.cli", "worker", "--url", "redis://redis:6379", "video_generation"]
+CMD ["python", "-m", "rq.cli", "worker", "video_generation"]
 
 # GPU worker stage for GPU-accelerated processing
-FROM production-base as gpu-worker
+FROM production-base AS gpu-worker
 
 # Install additional GPU dependencies if needed
 RUN uv pip install torch==2.10.0 torchvision==0.25.0 torchaudio==2.10.0 --index-url https://download.pytorch.org/whl/cu128
 
 # GPU worker command with GPU queue
-CMD ["python", "-m", "rq.cli", "worker", "--url", "redis://redis:6379", "gpu"]
+CMD ["python", "-m", "rq.cli", "worker", "gpu"]

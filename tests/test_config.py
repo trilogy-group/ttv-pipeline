@@ -191,3 +191,12 @@ class TestEnvironmentVariableOverrides:
         assert isinstance(config, APIConfig)
         assert config.pipeline_config["default_backend"] == "veo3"
         assert config.gcs.bucket == "test-api-bucket"
+
+    def test_gcs_credentials_path_reaches_veo_config(self, temp_config_files, monkeypatch):
+        monkeypatch.setenv("PIPELINE_CONFIG_PATH", temp_config_files["pipeline_config_path"])
+        monkeypatch.setenv("GCS_CREDENTIALS_PATH", "/app/credentials/credentials.json")
+
+        config = get_config_from_env()
+
+        assert config.gcs.credentials_path == "/app/credentials/credentials.json"
+        assert config.pipeline_config["google_veo"]["credentials_path"] == "/app/credentials/credentials.json"

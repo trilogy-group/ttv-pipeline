@@ -165,8 +165,10 @@ Phase 1 result:
   `google-genai` client with inline image parts.
 - API jobs are canonical at `/v1/jobs`; middleware, OpenAPI, examples, and
   smoke tests use the same prefix. The unversioned `/jobs` route returns 404.
-- Job creation stores the merged pipeline and GCS configuration. Both worker
-  modes pass that stored effective configuration to the pipeline unchanged.
+- Job creation stores the merged pipeline and GCS configuration with secret
+  values replaced by redaction markers. Both worker modes restore only those
+  exact fields from their locally mounted runtime configuration, preserving
+  queued nonsecret settings without retaining credentials in Redis.
 - `prepare_keyframes` now owns initial-frame generation/preservation and safe
   first/last-frame path resolution for CLI and API workers.
 - Remote fallback catches the generator interface's real exception type and
@@ -175,20 +177,29 @@ Phase 1 result:
   files containing API keys.
 - The Trio job path no longer duplicates Redis initialization, constructs the
   private `trio.Cancelled` exception, or leaks successful-job temp directories.
+- Post-review hardening added the advertised Nginx TLS listener, made optional
+  Redis authentication consistent across the server, RQ workers, and health
+  checks, propagated `GCS_CREDENTIALS_PATH` into the nested Veo configuration,
+  preserved a supplied `segment_00.png` through keyframe cleanup, and baked a
+  safe sample config into standalone API/worker images.
 
 Phase 1 validation:
 
 - `uv sync --extra dev`: succeeds with CPython 3.14.3.
-- Focused Python 3.14 and Phase 1 suite: 117 passed.
+- Focused Python 3.14 and Phase 1 suite: 117 passed. The later review-focused
+  API/config/queue/worker suite passed 85 tests.
 - `uv lock --check`, Python compilation, `bash -n setup.sh`, and
   `git diff --check`: pass.
 - `uv build` produces a wheel containing the API, workers, generators, and
   top-level pipeline modules.
 - Python 3.14 Linux wheel resolution passes for PyTorch 2.10.0,
   torchvision 0.25.0, and torchaudio 2.10.0 on CUDA 12.8; the updated Python
-  and NVIDIA base-image tags resolve. A full image build was not run because
-  the local Docker daemon was unavailable.
-- Full historical suite baseline: 337 passed, 104 failed, 4 skipped. The
+  and NVIDIA base-image tags resolve. The Python 3.14 API and worker images now
+  build successfully, load their standalone sample configuration, and connect
+  to an authenticated Redis instance through RQ's existing environment support.
+- Container checks also prove Redis rejects unauthenticated clients when a
+  password is configured and that the mounted Nginx TLS configuration is valid.
+- Full historical suite baseline: 340 passed, 103 failed, 4 skipped. The
   failures cluster in missing legacy Angie assets, obsolete API fixtures and
   removed artifact/log/cancel routes, old monitoring assumptions, and separate
   Trio executor tests. They are recorded as legacy cleanup outside this focused

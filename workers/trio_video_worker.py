@@ -15,6 +15,7 @@ import trio
 
 from api.queue import get_job_queue
 from api.models import JobStatus
+from api.config import restore_job_config_secrets
 from .trio_executor import (
     TrioCancellationToken,
     check_cancellation_async,
@@ -98,7 +99,7 @@ async def process_video_job_trio(job_id: str) -> str:
 
             # Extract configuration and prompt
             prompt = job_data.prompt
-            effective_config = job_data.config
+            effective_config = restore_job_config_secrets(job_data.config)
 
             logger.info(f"Processing job {job_id} with prompt: {prompt[:100]}...")
             logger.info(f"Using effective configuration with {len(effective_config)} parameters")

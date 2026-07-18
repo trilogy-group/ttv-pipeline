@@ -95,7 +95,7 @@ services:
     deploy:
       replicas: ${WORKER_REPLICAS:-2}
     healthcheck:
-      test: ["CMD", "python", "-c", "import redis; r=redis.Redis(host='redis', port=6379); r.ping()"]
+      test: ["CMD", "python", "-c", "import os, redis; redis.Redis(host='redis', port=6379, password=os.getenv('REDIS_PASSWORD') or None).ping()"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -147,9 +147,11 @@ services:
     networks:
       - api-network
     restart: unless-stopped
-    command: redis-server /usr/local/etc/redis/redis.conf
+    command: >-
+      sh -c 'exec redis-server /usr/local/etc/redis/redis.conf
+      $${REDIS_PASSWORD:+--requirepass "$$REDIS_PASSWORD"}'
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD-SHELL", "redis-cli --no-auth-warning $${REDIS_PASSWORD:+-a \"$$REDIS_PASSWORD\"} ping"]
       interval: 30s
       timeout: 10s
       retries: 3

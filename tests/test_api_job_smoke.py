@@ -15,6 +15,7 @@ def test_mocked_api_job_reaches_worker_with_effective_config():
         "default_backend": "fal",
         "image_generation_model": "openai/gpt-image-1",
         "openai_api_key": "test-secret",
+        "minimax": {"api_key": "nested-secret", "model": "I2V-01-Director"},
     }
     api_config = APIConfig(
         gcs=GCSConfig(bucket="test-bucket", credentials_path="test-credentials.json"),
@@ -31,6 +32,27 @@ def test_mocked_api_job_reaches_worker_with_effective_config():
     job_id = create_response.json()["id"]
     stored_config = queue.get_job(job_id).config.copy()
     assert stored_config == {
+        "default_backend": "fal",
+        "image_generation_model": "openai/gpt-image-1",
+        "openai_api_key": "[REDACTED]",
+        "minimax": {"api_key": "[REDACTED]", "model": "I2V-01-Director"},
+        "prompt": "HTTP prompt",
+        "gcs_bucket": "test-bucket",
+        "gcs_prefix": "ttv-api",
+        "credentials_path": "[REDACTED]",
+        "signed_url_expiration": 3600,
+    }
+    assert "secret" not in str(stored_config)
+
+    gcs_uri = f"gs://test-bucket/ttv-api/{job_id}/final_video.mp4"
+    with patch("api.config.get_config_from_env", return_value=api_config), \
+         patch("workers.video_worker.ensure_queue_initialized"), \
+         patch("workers.video_worker.get_job_queue", return_value=queue), \
+         patch("workers.video_worker.execute_pipeline_with_config", return_value=gcs_uri) as execute, \
+         patch("workers.video_worker._record_job_metrics"):
+        assert process_video_job(job_id, use_trio=False) == gcs_uri
+
+    assert execute.call_args.kwargs["config"] == {
         **pipeline_config,
         "prompt": "HTTP prompt",
         "gcs_bucket": "test-bucket",
@@ -38,15 +60,6 @@ def test_mocked_api_job_reaches_worker_with_effective_config():
         "credentials_path": "test-credentials.json",
         "signed_url_expiration": 3600,
     }
-
-    gcs_uri = f"gs://test-bucket/ttv-api/{job_id}/final_video.mp4"
-    with patch("workers.video_worker.ensure_queue_initialized"), \
-         patch("workers.video_worker.get_job_queue", return_value=queue), \
-         patch("workers.video_worker.execute_pipeline_with_config", return_value=gcs_uri) as execute, \
-         patch("workers.video_worker._record_job_metrics"):
-        assert process_video_job(job_id, use_trio=False) == gcs_uri
-
-    assert execute.call_args.kwargs["config"] == stored_config
     status_response = client.get(f"/v1/jobs/{job_id}")
     assert status_response.status_code == 200
     assert status_response.json()["status"] == JobStatus.FINISHED

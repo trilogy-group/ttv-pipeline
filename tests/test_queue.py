@@ -154,7 +154,9 @@ class TestJobQueue:
         queue = job_queue.queue
         
         # Just verify the queue was created with correct parameters
-        mock_queue_class.assert_called_once_with("test_queue", connection=mock_connection)
+        mock_queue_class.assert_called_once_with(
+            "test_queue", connection=mock_connection, result_ttl=604800
+        )
         # Verify we got a queue instance (can't compare directly due to RQ's __eq__ implementation)
         assert queue is not None
     
@@ -188,7 +190,7 @@ class TestJobQueue:
         
         with patch.object(job_queue, '_store_job_data') as mock_store:
             request = JobCreateRequest(prompt="Test prompt")
-            config = {"test": "config"}
+            config = {"test": "config", "openai_api_key": "test-secret"}
             
             result = job_queue.enqueue_job(request, config)
             
@@ -196,7 +198,7 @@ class TestJobQueue:
             assert result.id == job_id
             assert result.status == JobStatus.QUEUED
             assert result.prompt == "Test prompt"
-            assert result.config == config
+            assert result.config == {"test": "config", "openai_api_key": "[REDACTED]"}
             assert result.created_at == created_at
             
             # Verify RQ enqueue was called

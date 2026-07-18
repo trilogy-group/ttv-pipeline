@@ -77,6 +77,31 @@ class TestPipelineIntegration:
             assert video_prompts[0]["first_frame"] == os.path.join(frames_dir, "segment_00.png")
             assert video_prompts[1]["last_frame"] == os.path.join(frames_dir, "segment_02.png")
 
+    def test_prepare_keyframes_keeps_start_already_named_segment_zero(self):
+        with tempfile.TemporaryDirectory() as output_dir:
+            frames_dir = os.path.join(output_dir, "frames")
+            os.makedirs(frames_dir)
+            initial_image = os.path.join(frames_dir, "segment_00.png")
+            with open(initial_image, "wb") as file:
+                file.write(b"start")
+
+            def generate_frame(**kwargs):
+                with open(kwargs["input_image_path"], "rb") as file:
+                    assert file.read() == b"start"
+                with open(kwargs["output_path"], "wb") as file:
+                    file.write(b"frame")
+                return kwargs["output_path"]
+
+            video_prompts = [{"segment": 1, "prompt": "one", "first_frame": "provided_start_image.png"}]
+            config = {"image_generation_model": "test", "initial_image": initial_image}
+
+            with patch("keyframe_generator.generate_keyframe", side_effect=generate_frame):
+                prepare_keyframes(config, ["one"], video_prompts, output_dir)
+
+            with open(initial_image, "rb") as file:
+                assert file.read() == b"start"
+            assert video_prompts[0]["first_frame"] == initial_image
+
     def test_single_keyframe_generation_uses_typed_error_fallback(self):
         with tempfile.TemporaryDirectory() as output_dir:
             frame_path = os.path.join(output_dir, "frame.png")

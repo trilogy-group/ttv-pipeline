@@ -711,8 +711,11 @@ def generate_keyframes_from_json(json_file, output_dir, model_name=None, imageRo
     
     # Force a clean start
     if os.path.exists(output_dir):
+        initial_image = os.path.abspath(initial_image_path) if initial_image_path else None
         for f in os.listdir(output_dir):
             if f.startswith("segment_") and f.endswith(".png"):
+                if os.path.abspath(os.path.join(output_dir, f)) == initial_image:
+                    continue
                 try:
                     os.remove(os.path.join(output_dir, f))
                 except:

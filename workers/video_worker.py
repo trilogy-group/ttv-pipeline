@@ -21,7 +21,7 @@ from contextlib import contextmanager
 
 from api.queue import get_job_queue, initialize_queue_infrastructure
 from api.models import JobStatus
-from api.config import get_config_from_env
+from api.config import get_config_from_env, restore_job_config_secrets
 
 # Import Trio components with fallback
 try:
@@ -297,7 +297,7 @@ def process_video_job_threading(job_id: str) -> str:
             
             # Extract configuration and prompt
             prompt = job_data.prompt
-            effective_config = job_data.config
+            effective_config = restore_job_config_secrets(job_data.config)
             
             logger.info(f"Processing job {job_id} with prompt: {prompt[:100]}...")
             logger.info(f"Using effective configuration with {len(effective_config)} parameters")

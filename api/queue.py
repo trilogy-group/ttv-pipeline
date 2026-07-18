@@ -19,7 +19,7 @@ from rq.exceptions import NoSuchJobError
 from rq.job import JobStatus as RQJobStatus
 
 from .models import JobData, JobStatus, JobCreateRequest
-from .config import RedisConfig
+from .config import RedisConfig, redact_config_secrets
 
 logger = logging.getLogger(__name__)
 
@@ -140,7 +140,7 @@ class JobQueue:
             status=JobStatus.QUEUED,
             created_at=created_at,
             prompt=request.prompt,
-            config=effective_config
+            config=redact_config_secrets(effective_config)
         )
         
         try:
