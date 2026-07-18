@@ -30,8 +30,8 @@ The TTV Pipeline provides separate Dockerfiles for different deployment scenario
 This approach allows users to build only the specific image they need, without dependencies for unused backends.
 
 **Key Architecture Components:**
-- **Base Layer**: NVIDIA CUDA 12.1.1 with Ubuntu 22.04
-- **Runtime Environment**: Python 3.11 with UV package management
+- **Base Layer**: NVIDIA CUDA 12.8.1 with Ubuntu 22.04
+- **Runtime Environment**: Python 3.14 with UV package management
 - **Core Application**: TTV Pipeline with configurable backends
 - **Specialized Backends**: Separate images for each backend (FramePack, Wan2.1)
 - **Web Interface**: Pipeline-driven Gradio interface
@@ -93,16 +93,16 @@ The container deployment uses NVIDIA CUDA as the foundation to support GPU-accel
 
 **Base Configuration:**
 ```dockerfile
-FROM nvidia/cuda:12.1.1-devel-ubuntu22.04
+FROM nvidia/cuda:12.8.1-devel-ubuntu22.04
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PATH="/root/.local/bin:${PATH}"
 ```
 
 **Key Environment Features:**
-- **CUDA Version**: 12.1.1 development environment
+- **CUDA Version**: 12.8.1 development environment
 - **OS**: Ubuntu 22.04 LTS
-- **Python Version**: 3.10 (stable release)
+- **Python Version**: 3.14
 - **Non-interactive**: Automated installation without prompts
 
 The base environment setup includes essential system packages and development tools:
@@ -130,8 +130,8 @@ RUN curl -LsSf https://astral.sh/uv/install.sh -o /uv-installer.sh && \
 
 **Environment Setup:**
 ```dockerfile
-RUN uv sync --python 3.11 --no-dev && \
-    uv pip install torch==2.0.1 torchvision==0.15.2 torchaudio==2.0.2 --index-url https://download.pytorch.org/whl/cu118 && \
+RUN uv sync --python 3.14 --no-dev && \
+    uv pip install torch==2.10.0 torchvision==0.25.0 torchaudio==2.10.0 --index-url https://download.pytorch.org/whl/cu128 && \
     uv pip install gradio
 ```
 

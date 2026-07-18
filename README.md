@@ -179,7 +179,7 @@ Remote backends (Runway, Veo3, Minimax) manage their own scaling and do not use 
 ## Setup and Requirements
 
 ### Dependencies
-- Python 3.11 (managed automatically by `uv` from `.python-version`).
+- Python 3.14 (managed automatically by `uv` from `.python-version`).
 - [`uv`](https://docs.astral.sh/uv/) for environment and dependency management.
 - For Keyframe Generation: Stability AI API or OpenAI gpt-image-1 API key.
 - For Prompt Enhancement: OpenAI API key.
@@ -195,7 +195,7 @@ Remote backends (Runway, Veo3, Minimax) manage their own scaling and do not use 
    cd ttv-pipeline
    ```
 
-2. Create the Python 3.11 development environment:
+2. Create the Python 3.14 development environment:
    ```bash
    uv sync --extra dev
    ```

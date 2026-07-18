@@ -13,7 +13,7 @@ This document covers the initial setup, installation, and basic configuration re
 ## Prerequisites
 
 Before beginning setup, ensure you have:
-- Python 3.11
+- Python 3.14
 - [`uv`](https://docs.astral.sh/uv/)
 - CUDA-compatible GPU (for local generation)
 - Git
@@ -44,7 +44,7 @@ chmod +x setup.sh
 
 The script performs these operations:
 
-1. **Synchronizes the Python 3.11 environment** from `pyproject.toml` and `uv.lock`
+1. **Synchronizes the Python 3.14 environment** from `pyproject.toml` and `uv.lock`
 2. **Installs local-backend dependencies** when a local backend is selected
 3. **Creates a Python virtual environment** in `.venv`
 4. **Downloads the Wan2.1 framework** to `./frameworks/Wan2.1`

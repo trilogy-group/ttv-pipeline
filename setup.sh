@@ -114,7 +114,7 @@ if [ "$SETUP_ENV" = true ]; then
     exit 1
   fi
 
-  # .python-version pins Python 3.11; pyproject.toml and uv.lock are authoritative.
+  # .python-version pins Python 3.14; pyproject.toml and uv.lock are authoritative.
   uv sync --extra dev
   source .venv/bin/activate
 

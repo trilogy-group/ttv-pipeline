@@ -133,7 +133,7 @@ Goal: make CLI/API behavior testable and consistent before new product work.
 
 Completed one-off tasks:
 
-- [x] Standardize development on Python 3.11 and `uv sync --extra dev`; make
+- [x] Standardize development on Python 3.14 and `uv sync --extra dev`; make
   `pyproject.toml` the dependency source of truth.
 - [x] Make threading and Trio workers use the effective configuration stored with
   each job instead of rebuilding prompt-only configuration.
@@ -157,9 +157,12 @@ Exit criteria:
 
 Phase 1 result:
 
-- `.python-version` pins Python 3.11; `uv.lock` is committed alongside
+- `.python-version` pins Python 3.14; `uv.lock` is committed alongside
   `pyproject.toml`, and root `requirements.txt` was removed.
 - The supported development bootstrap is `uv sync --extra dev`.
+- The Python 3.14 upgrade removes the unused `stability-sdk` and deprecated
+  `google-generativeai` dependency trees. Gemini keyframes use the supported
+  `google-genai` client with inline image parts.
 - API jobs are canonical at `/v1/jobs`; middleware, OpenAPI, examples, and
   smoke tests use the same prefix. The unversioned `/jobs` route returns 404.
 - Job creation stores the merged pipeline and GCS configuration. Both worker
@@ -175,13 +178,17 @@ Phase 1 result:
 
 Phase 1 validation:
 
-- `uv sync --extra dev`: succeeds with CPython 3.11.13.
-- Focused Phase 1 suite: 60 passed.
+- `uv sync --extra dev`: succeeds with CPython 3.14.3.
+- Focused Python 3.14 and Phase 1 suite: 117 passed.
 - `uv lock --check`, Python compilation, `bash -n setup.sh`, and
   `git diff --check`: pass.
 - `uv build` produces a wheel containing the API, workers, generators, and
   top-level pipeline modules.
-- Full historical suite baseline: 336 passed, 104 failed, 4 skipped. The
+- Python 3.14 Linux wheel resolution passes for PyTorch 2.10.0,
+  torchvision 0.25.0, and torchaudio 2.10.0 on CUDA 12.8; the updated Python
+  and NVIDIA base-image tags resolve. A full image build was not run because
+  the local Docker daemon was unavailable.
+- Full historical suite baseline: 337 passed, 104 failed, 4 skipped. The
   failures cluster in missing legacy Angie assets, obsolete API fixtures and
   removed artifact/log/cancel routes, old monitoring assumptions, and separate
   Trio executor tests. They are recorded as legacy cleanup outside this focused

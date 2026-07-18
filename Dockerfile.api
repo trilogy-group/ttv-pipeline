@@ -2,7 +2,7 @@
 # This Dockerfile creates optimized images for API server and workers
 
 # Base stage with common dependencies
-FROM python:3.11-slim as base
+FROM python:3.14-slim as base
 
 # Set environment variables for Python
 ENV PYTHONUNBUFFERED=1 \
@@ -104,7 +104,7 @@ CMD ["python", "-m", "rq.cli", "worker", "--url", "redis://redis:6379", "video_g
 FROM production-base as gpu-worker
 
 # Install additional GPU dependencies if needed
-RUN uv pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+RUN uv pip install torch==2.10.0 torchvision==0.25.0 torchaudio==2.10.0 --index-url https://download.pytorch.org/whl/cu128
 
 # GPU worker command with GPU queue
 CMD ["python", "-m", "rq.cli", "worker", "--url", "redis://redis:6379", "gpu"]

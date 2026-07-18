@@ -1,5 +1,5 @@
 # Base image with common dependencies
-FROM nvidia/cuda:12.1.1-devel-ubuntu22.04 AS ttv-base
+FROM nvidia/cuda:12.8.1-devel-ubuntu22.04 AS ttv-base
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PATH="/root/.local/bin:${PATH}"
@@ -25,9 +25,9 @@ WORKDIR /workspace/ttv-pipeline
 # Create frameworks directory for dependencies
 RUN mkdir -p frameworks
 
-# Install the project from pyproject.toml with Python 3.11.
-RUN uv sync --python 3.11 --no-dev && \
-    uv pip install torch==2.0.1 torchvision==0.15.2 torchaudio==2.0.2 --index-url https://download.pytorch.org/whl/cu118
+# Install the project from pyproject.toml with Python 3.14.
+RUN uv sync --python 3.14 --no-dev && \
+    uv pip install torch==2.10.0 torchvision==0.25.0 torchaudio==2.10.0 --index-url https://download.pytorch.org/whl/cu128
 
 # Install Gradio for web interface
 RUN uv pip install gradio

@@ -187,18 +187,18 @@ Reference ←─────Reference ←────Reference
 ### Gemini API Configuration
 
 ```python
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 
-# Configure API
-genai.configure(api_key=gemini_api_key)
+client = genai.Client(api_key=gemini_api_key)
 
 # Model configuration
-generation_config = {
-    "temperature": 0.7,
-    "top_p": 0.95,
-    "top_k": 40,
-    "max_output_tokens": 8192,
-}
+generation_config = types.GenerateContentConfig(
+    temperature=0.7,
+    top_p=0.95,
+    top_k=40,
+    max_output_tokens=8192,
+)
 
 # Safety settings
 safety_settings = [
