@@ -16,20 +16,25 @@ import argparse
 import json
 import logging
 import os
+import shutil
 import subprocess
 import tempfile
-from typing import Dict
-import time
+from typing import Dict, List, Optional, Union
+
 import yaml
+from instructor import from_openai, Mode
+from pydantic import BaseModel
+
+from api.config_merger import ConfigMerger
 from frame_extractor import extract_last_frame
 from generators.factory import create_video_generator, get_fallback_generator
-from video_generator_interface import VideoGenerationError, APIError, GenerationTimeoutError, InvalidInputError, QuotaExceededError
-from datetime import datetime
-from pathlib import Path
-from typing import Dict, List, Optional, Union
-from pydantic import BaseModel
-from instructor import from_openai, Mode
-from api.config_merger import ConfigMerger
+from video_generator_interface import (
+    APIError,
+    GenerationTimeoutError,
+    InvalidInputError,
+    QuotaExceededError,
+    VideoGenerationError,
+)
 
 def load_config(config_path: str) -> dict:
     """Load configuration from YAML file"""
@@ -273,8 +278,93 @@ def generate_keyframes(
         initial_image_path=initial_image_path,
         image_size=image_size,
         reference_images_dir=reference_images_dir,
-        max_retries=max_retries
+        max_retries=max_retries,
     )
+
+
+def prepare_keyframes(
+    config: Dict,
+    keyframe_prompts: List[Union[str, Dict]],
+    video_prompts: List[Dict],
+    output_dir: str,
+) -> List[str]:
+    """Generate keyframes, preserve the starting frame, and resolve prompt frame paths."""
+    model_name = config.get("image_generation_model")
+    if not model_name:
+        raise ValueError("No image generation model specified")
+
+    initial_image = config.get("initial_image")
+    generated_initial = None
+    if initial_image:
+        initial_image = os.path.abspath(initial_image)
+        if not os.path.exists(initial_image):
+            raise FileNotFoundError(f"Initial image not found: {initial_image}")
+    else:
+        if not keyframe_prompts:
+            raise ValueError("No keyframe prompts were generated")
+        first_prompt = keyframe_prompts[0]
+        if isinstance(first_prompt, dict):
+            first_prompt = first_prompt["prompt"]
+        generated_initial = os.path.join(output_dir, "initial_frame.png")
+        from keyframe_generator import generate_keyframe
+
+        initial_image = generate_keyframe(
+            prompt=f"First frame establishing shot: {first_prompt}",
+            output_path=generated_initial,
+            model_name=model_name,
+            imageRouter_api_key=config.get("image_router_api_key")
+            or config.get("image_router_token"),
+            stability_api_key=config.get("stability_api_key"),
+            openai_api_key=config.get("openai_api_key"),
+            gemini_api_key=config.get("gemini_api_key"),
+            size=config.get("image_size", "1024x1024"),
+            reference_images_dir=config.get("reference_images_dir"),
+            max_retries=config.get("remote_api_settings", {}).get("max_retries", 3),
+        )
+
+    keyframe_paths = generate_keyframes(
+        keyframe_prompts=keyframe_prompts,
+        config=config,
+        output_dir=output_dir,
+        model_name=model_name,
+        imageRouter_api_key=config.get("image_router_api_key") or config.get("image_router_token"),
+        stability_api_key=config.get("stability_api_key"),
+        openai_api_key=config.get("openai_api_key"),
+        gemini_api_key=config.get("gemini_api_key"),
+        initial_image_path=initial_image,
+        image_size=config.get("image_size", "1024x1024"),
+        reference_images_dir=config.get("reference_images_dir"),
+        max_retries=config.get("remote_api_settings", {}).get("max_retries", 3),
+    )
+    if not keyframe_paths:
+        raise RuntimeError("Keyframe generation produced no frames")
+
+    frames_dir = os.path.abspath(os.path.join(output_dir, "frames"))
+    segment_00_path = os.path.join(frames_dir, "segment_00.png")
+    if os.path.abspath(initial_image) != segment_00_path:
+        shutil.copy2(initial_image, segment_00_path)
+
+    for prompt_item in video_prompts:
+        for field in ("first_frame", "last_frame"):
+            frame_ref = prompt_item.get(field)
+            if not frame_ref:
+                continue
+            if frame_ref == "provided_start_image.png":
+                frame_ref = "segment_00.png"
+            if os.path.isabs(frame_ref):
+                frame_path = os.path.abspath(frame_ref)
+            else:
+                frame_path = os.path.abspath(os.path.join(frames_dir, frame_ref))
+                if os.path.commonpath((frames_dir, frame_path)) != frames_dir:
+                    raise ValueError(f"Invalid {field} path: {frame_ref}")
+            if not os.path.exists(frame_path):
+                raise FileNotFoundError(f"{field} not found: {frame_path}")
+            prompt_item[field] = frame_path
+
+    if generated_initial and os.path.exists(generated_initial):
+        os.remove(generated_initial)
+    return keyframe_paths
+
 
 def stitch_video_segments(video_paths: List[str], output_file: str) -> Optional[str]:
     """Stitch together video segments into a final video using ffmpeg"""
@@ -296,6 +386,7 @@ def stitch_video_segments(video_paths: List[str], output_file: str) -> Optional[
     # Clean up the temporary file
     os.unlink(list_file)
     return output_file
+
 
 def generate_single_video_segment(
     wan2_dir: str,
@@ -590,12 +681,10 @@ def generate_video_segments_single_keyframe(
         List of paths to generated video files
     """
     import generators.factory as factory
-    from generators.exceptions import InvalidInputError, GenerationError
-
     video_paths = []
 
     # Get the video generation backend
-    backend = config.get('default_video_generation_backend', 'veo3')
+    backend = config.get('default_video_generation_backend', config.get('default_backend', 'veo3'))
     logging.info(f"Using {backend} for single-keyframe video generation")
 
     # Get segment duration
@@ -668,29 +757,23 @@ def generate_video_segments_single_keyframe(
             video_paths.append(video_file)
             logging.info(f"Generated video segment {seg}: {video_file}")
 
-        except (InvalidInputError, GenerationError) as e:
+        except VideoGenerationError as e:
             logging.error(f"Failed to generate video for segment {seg}: {e}")
 
             # Try fallback if configured
-            fallback_generator = factory.get_fallback_generator(config, backend)
+            fallback_generator = factory.get_fallback_generator(backend, config)
             if fallback_generator:
-                try:
-                    logging.info(f"Trying fallback generator for segment {seg}")
-                    fallback_generator.generate_video(
-                        prompt=prompt_text,
-                        input_image_path=keyframe_path,
-                        output_path=video_file,
-                        duration=segment_duration
-                    )
-                    video_paths.append(video_file)
-                    logging.info(f"Fallback succeeded for segment {seg}")
-                except Exception as fallback_error:
-                    logging.error(f"Fallback also failed for segment {seg}: {fallback_error}")
+                logging.info(f"Trying fallback generator for segment {seg}")
+                fallback_generator.generate_video(
+                    prompt=prompt_text,
+                    input_image_path=keyframe_path,
+                    output_path=video_file,
+                    duration=segment_duration
+                )
+                video_paths.append(video_file)
+                logging.info(f"Fallback succeeded for segment {seg}")
             else:
-                logging.error(f"No fallback available for segment {seg}")
-
-        except Exception as e:
-            logging.error(f"Unexpected error generating video for segment {seg}: {e}")
+                raise
 
     return video_paths
 
@@ -1013,8 +1096,6 @@ def generate_video_chaining_mode(
                     raise FileNotFoundError(f"Initial image not found: {input_image}")
             else:
                 # No initial image provided, need to generate one
-                from keyframe_generator import generate_keyframe
-
                 # Create a starting frame using the first segment's prompt
                 logging.info("No initial image provided, generating one for first segment")
                 input_image = os.path.join(frames_dir, "segment_00.png")
@@ -1207,10 +1288,6 @@ def run_pipeline(config_path: str, prompt_override: str = None) -> None:
     logging.info(f"Frames directory: {frames_dir}")
     logging.info(f"Videos directory: {videos_dir}")
 
-    # Save a copy of the effective configuration (after merging)
-    with open(os.path.join(output_dir, 'config.yaml'), 'w') as f:
-        yaml.dump(config, f)
-
     # Step 1: Enhance the input prompt
     raw_prompt = config.get("prompt")
     if not raw_prompt:
@@ -1218,117 +1295,6 @@ def run_pipeline(config_path: str, prompt_override: str = None) -> None:
 
     # Call the enhanced prompt function with colorful output
     enhanced_data = enhance_prompt(raw_prompt, config, output_dir)
-
-    # Step 2: Generate keyframes
-    logging.info("Generating keyframes...")
-    image_generation_model = config.get('image_generation_model')
-    # Get API keys from config
-    openai_api_key = config.get('openai_api_key')
-    stability_api_key = config.get('stability_api_key')
-    imageRouter_api_key = config.get('image_router_token')
-    gemini_api_key = config.get('gemini_api_key')
-
-    # Get keyframe generation settings
-    model_name = config.get('keyframe_prompt_model', 'dall-e-3')
-    image_size = config.get('image_size', '1024x1024')
-
-    # Get I2I mode settings (now consolidated into main image generation)
-    reference_images_dir = config.get('reference_images_dir')
-    auto_generate_initial = config.get('auto_generate_initial', True)
-    keyframe_position = config.get('keyframe_position', 'first')
-
-    # Adjust image size for Stability AI if needed
-    if image_generation_model and "stability" in image_generation_model.lower():
-        image_size = "1024x1024"
-        logging.info(f"Using Stability AI image size: {image_size}")
-
-    initial_image = config.get('initial_image')
-
-    # Log which API will be used based on configured model
-    if image_generation_model:  # Check if image_generation_model is not None
-        if "openai" in image_generation_model.lower():
-            if config.get('openai_api_key'):
-                logging.info(f"Using OpenAI API ({image_generation_model}) for keyframe generation")
-            else:
-                logging.warning(f"Selected model {image_generation_model} but no OpenAI API key provided")
-        elif "stability" in image_generation_model.lower():
-            if stability_api_key:
-                logging.info(f"Using Stability AI API ({image_generation_model}) for keyframe generation")
-            else:
-                logging.warning(f"Selected model {image_generation_model} but no Stability AI API key provided")
-        elif imageRouter_api_key:
-            logging.info(f"Using ImageRouter API with model {image_generation_model} for keyframe generation")
-        else:
-            logging.warning("No suitable API keys provided for the selected image generation model")
-    else:
-        logging.warning("No image generation model specified in configuration")
-
-    # Check if we need to generate an initial frame (segment_00.png)
-    if not initial_image:
-        # Need to generate segment_00.png as our starting point
-        logging.info("No initial image provided, generating segment_00.png first")
-        print(f"\n{Colors.BOLD}{Colors.PURPLE}Generating Initial Frame (segment_00.png):{Colors.RESET}")
-
-        # Create a prompt for the initial frame based on the first segment
-        if len(enhanced_data['keyframe_prompts']) > 0:
-            first_segment_prompt = enhanced_data['keyframe_prompts'][0]['prompt']
-            # Create a starting frame prompt by modifying the first segment's prompt
-            initial_frame_prompt = f"First frame establishing shot: {first_segment_prompt}"
-
-            # Generate the initial frame using the prompt
-            from keyframe_generator import generate_keyframe_with_openai, generate_keyframe_with_stability
-
-            # Set up output path
-            frames_dir = os.path.join(output_dir, "frames")
-            os.makedirs(frames_dir, exist_ok=True)
-            initial_frame_path = os.path.join(frames_dir, "segment_00.png")
-
-            # Generate using appropriate API based on configured model
-            if "gemini" in image_generation_model.lower() and config.get('gemini_api_key'):
-                logging.info(f"Generating initial frame with Gemini: {initial_frame_prompt}")
-                try:
-                    generate_keyframe_with_gemini(
-                        prompt=initial_frame_prompt,
-                        output_path=initial_frame_path,
-                        gemini_api_key=config.get('gemini_api_key'),
-                        model_name=image_generation_model,
-                        max_retries=config.get('remote_api_settings', {}).get('max_retries', 3)
-                    )
-                    initial_image = initial_frame_path  # Use this as our initial image
-                    logging.info(f"Generated initial frame at {initial_frame_path}")
-                except Exception as e:
-                    logging.error(f"Failed to generate initial frame with Gemini: {e}")
-                    raise
-            elif "openai" in image_generation_model.lower() and config.get('openai_api_key'):
-                logging.info(f"Generating initial frame with OpenAI: {initial_frame_prompt}")
-                try:
-                    generate_keyframe_with_openai(
-                        prompt=initial_frame_prompt,
-                        output_path=initial_frame_path,
-                        openai_api_key=config.get('openai_api_key'),
-                        size=image_size
-                    )
-                    initial_image = initial_frame_path  # Use this as our initial image
-                    logging.info(f"Generated initial frame at {initial_frame_path}")
-                except Exception as e:
-                    logging.error(f"Failed to generate initial frame with OpenAI: {e}")
-                    raise
-            elif "stability" in image_generation_model.lower() and stability_api_key:
-                logging.info(f"Generating initial frame with Stability AI: {initial_frame_prompt}")
-                try:
-                    generate_keyframe_with_stability(
-                        prompt=initial_frame_prompt,
-                        output_path=initial_frame_path,
-                        stability_api_key=stability_api_key
-                    )
-                    initial_image = initial_frame_path  # Use this as our initial image
-                    logging.info(f"Generated initial frame at {initial_frame_path}")
-                except Exception as e:
-                    logging.error(f"Failed to generate initial frame with Stability AI: {e}")
-                    raise
-            else:
-                logging.error("Unable to generate initial frame, no suitable API keys provided")
-                raise ValueError("Cannot generate initial frame without OpenAI, Gemini, or Stability AI API keys")
 
     # Determine which generation mode we're using
     generation_mode = config.get('generation_mode', 'keyframe').lower()
@@ -1339,84 +1305,15 @@ def run_pipeline(config_path: str, prompt_override: str = None) -> None:
 
     if generation_mode == 'keyframe':
         # ----- KEYFRAME MODE -----
-        # Generate keyframes for first-last-frame to video generation
         logging.info(f"Starting keyframe generation for {len(enhanced_data['keyframe_prompts'])} segments")
         print(f"\n{Colors.BOLD}{Colors.PURPLE}Generating Keyframes:{Colors.RESET}")
 
-        # Generate keyframes sequentially for character consistency
-        keyframe_paths = generate_keyframes(
-            config=config,
+        prepare_keyframes(
+            config,
             keyframe_prompts=enhanced_data['keyframe_prompts'],
-            output_dir=frames_dir,
-            model_name=image_generation_model,
-            imageRouter_api_key=imageRouter_api_key,
-            stability_api_key=stability_api_key,
-            openai_api_key=config.get('openai_api_key'),
-            gemini_api_key=config.get('gemini_api_key'),
-            initial_image_path=initial_image,
-            image_size=image_size,
-            reference_images_dir=reference_images_dir,
-            max_retries=config.get('remote_api_settings', {}).get('max_retries', 3)
+            video_prompts=enhanced_data['video_prompts'],
+            output_dir=output_dir,
         )
-
-        # Ensure segment_00.png exists before proceeding to video generation
-        # This is critical for the first segment to work correctly
-        segment_00_path = os.path.join(frames_dir, "segment_00.png")
-        if not os.path.exists(segment_00_path) and len(keyframe_paths) > 0:
-            logging.info(f"Creating segment_00.png as a copy of the first keyframe")
-            import shutil
-            try:
-                # Copy the first segment's keyframe as segment_00.png
-                shutil.copy2(keyframe_paths[0], segment_00_path)
-                logging.info(f"Created segment_00.png by copying {keyframe_paths[0]}")
-                # Verify the file exists after copy
-                if os.path.exists(segment_00_path):
-                    logging.info(f"Verified segment_00.png exists at {segment_00_path}")
-                else:
-                    logging.error(f"Failed to create segment_00.png after copy operation")
-            except Exception as e:
-                logging.error(f"Error creating segment_00.png: {e}")
-                # Try an alternative approach - create a symbolic link
-                try:
-                    os.symlink(keyframe_paths[0], segment_00_path)
-                    logging.info(f"Created symlink for segment_00.png pointing to {keyframe_paths[0]}")
-                except Exception as e2:
-                    logging.error(f"Error creating symlink: {e2}")
-
-        # Double-check the frames directory contents before video generation
-        logging.info(f"Frames directory contents before video generation: {os.listdir(frames_dir)}")
-
-        # Fix video prompt paths to use absolute paths to actual keyframe files
-        # The OpenAI prompt enhancement generates relative paths, but we need absolute paths
-        frames_dir_abs = os.path.abspath(frames_dir)
-        logging.info(f"Absolute frames directory path: {frames_dir_abs}")
-
-        # Map relative keyframe references to actual generated files
-        for i, prompt_item in enumerate(enhanced_data['video_prompts']):
-            # Fix first_frame path
-            if 'first_frame' in prompt_item:
-                first_frame_ref = prompt_item['first_frame']
-                if first_frame_ref == 'provided_start_image.png':
-                    # This should be segment_00.png
-                    prompt_item['first_frame'] = os.path.join(frames_dir_abs, 'segment_00.png')
-                elif first_frame_ref.startswith('segment_') and first_frame_ref.endswith('.png'):
-                    # Convert relative segment reference to absolute path
-                    prompt_item['first_frame'] = os.path.join(frames_dir_abs, first_frame_ref)
-                else:
-                    # For any other reference, try to resolve it
-                    prompt_item['first_frame'] = os.path.join(frames_dir_abs, first_frame_ref)
-                logging.info(f"Updated first_frame for segment {prompt_item.get('segment', i)}: {prompt_item['first_frame']}")
-
-            # Fix last_frame path
-            if 'last_frame' in prompt_item:
-                last_frame_ref = prompt_item['last_frame']
-                if last_frame_ref.startswith('segment_') and last_frame_ref.endswith('.png'):
-                    # Convert relative segment reference to absolute path
-                    prompt_item['last_frame'] = os.path.join(frames_dir_abs, last_frame_ref)
-                else:
-                    # For any other reference, try to resolve it
-                    prompt_item['last_frame'] = os.path.join(frames_dir_abs, last_frame_ref)
-                logging.info(f"Updated last_frame for segment {prompt_item.get('segment', i)}: {prompt_item['last_frame']}")
 
         # Get FLF2V model directory for keyframe mode
         flf2v_model_dir = config.get('flf2v_model_dir', './Wan2.1-FLF2V-14B-720P')

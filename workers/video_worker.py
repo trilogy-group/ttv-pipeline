@@ -16,20 +16,15 @@ import os
 import subprocess
 import threading
 import tempfile
-import yaml
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, List
 from contextlib import contextmanager
-from pathlib import Path
 
 from api.queue import get_job_queue, initialize_queue_infrastructure
 from api.models import JobStatus
-from api.config_merger import ConfigMerger
 from api.config import get_config_from_env
 
 # Import Trio components with fallback
 try:
-    import trio
-    from .trio_executor import get_trio_executor, initialize_trio_executor
     from .trio_video_worker import process_video_job_trio_wrapper
     TRIO_AVAILABLE = True
     logger = logging.getLogger(__name__)
@@ -203,39 +198,6 @@ def check_cancellation(cancellation_token: CancellationToken, job_id: str) -> bo
     return False
 
 
-def _ensure_queue_infrastructure():
-    """
-    Ensure queue infrastructure is initialized for worker processes.
-    
-    This function initializes the queue infrastructure if it hasn't been
-    initialized yet. It's called at the start of each job to ensure
-    the worker has access to the job queue.
-    """
-    from api.queue import get_job_queue, initialize_queue_infrastructure
-    from api.config import RedisConfig, get_config_from_env
-    
-    try:
-        # Try to get existing queue instance
-        get_job_queue()
-        logger.debug("Queue infrastructure already initialized")
-        return
-    except RuntimeError:
-        # Queue not initialized, initialize it now
-        logger.info("Initializing queue infrastructure for worker")
-        
-        try:
-            # Get configuration from environment
-            config = get_config_from_env()
-            
-            # Initialize queue infrastructure
-            initialize_queue_infrastructure(config.redis)
-            logger.info("Queue infrastructure initialized successfully in worker")
-            
-        except Exception as e:
-            logger.error(f"Failed to initialize queue infrastructure in worker: {e}")
-            raise
-
-
 def process_video_job(job_id: str, use_trio: bool = True) -> str:
     """
     Process a video generation job with cancellation support and pipeline integration.
@@ -257,9 +219,8 @@ def process_video_job(job_id: str, use_trio: bool = True) -> str:
     logger.info(f"Starting video generation job {job_id}")
     start_time = time.time()
     
-    # Ensure queue infrastructure is initialized
+    # Ensure queue infrastructure is initialized once per worker process.
     ensure_queue_initialized()
-    _ensure_queue_infrastructure()
     
     try:
         # Use Trio structured concurrency if available and requested
@@ -273,6 +234,8 @@ def process_video_job(job_id: str, use_trio: bool = True) -> str:
                 _record_job_metrics(processing_time, success=True)
                 
                 return result
+            except InterruptedError:
+                raise
             except Exception as e:
                 logger.warning(f"Trio execution failed for job {job_id}, falling back to threading: {e}")
                 # Fall through to threading-based execution
@@ -433,13 +396,6 @@ def execute_pipeline_with_config(
             job_queue.update_job_status(job_id, JobStatus.PROGRESS, progress=5)
             job_queue.add_job_log(job_id, "Setting up pipeline configuration")
             
-            # Write job-specific configuration to temporary file for logging
-            job_config_path = os.path.join(temp_dir, "job_config.yaml")
-            with open(job_config_path, 'w') as f:
-                yaml.dump(config, f, default_flow_style=False)
-            
-            logger.info(f"Job configuration written to {job_config_path}")
-            
             # Phase 2: Import and initialize pipeline (10%)
             if check_cancellation(cancellation_token, job_id):
                 raise InterruptedError("Job cancelled during pipeline initialization")
@@ -449,22 +405,10 @@ def execute_pipeline_with_config(
             
             # Import pipeline functions
             from pipeline import (
-                load_config, PromptEnhancer, generate_keyframes, 
-                generate_video_segments, stitch_video_segments,
-                PROMPT_ENHANCEMENT_INSTRUCTIONS
+                PromptEnhancer, stitch_video_segments,
+                PROMPT_ENHANCEMENT_INSTRUCTIONS,
             )
-            
-            # Load base configuration from mounted pipeline_config.yaml
-            base_config_path = "/app/pipeline_config.yaml"
-            if not os.path.exists(base_config_path):
-                logger.error(f"Base pipeline config not found at {base_config_path}")
-                raise FileNotFoundError(f"Pipeline configuration not found at {base_config_path}")
-            
-            base_config = load_config(base_config_path)
-            
-            # Use ConfigMerger to ensure proper precedence (HTTP prompt overrides config)
-            config_merger = ConfigMerger()
-            final_config = config_merger.merge_for_job(base_config, prompt)
+            final_config = config
             
             logger.info(f"Final configuration merged with prompt override")
             logger.info(f"Image generation model from config: {final_config.get('image_generation_model')}")
@@ -503,6 +447,7 @@ def execute_pipeline_with_config(
             # Generate keyframes with progress tracking
             keyframe_paths = generate_keyframes_with_progress(
                 keyframe_prompts=keyframe_prompts,
+                video_prompts=video_prompts,
                 config=final_config,
                 output_dir=job_output_dir,
                 cancellation_token=cancellation_token,
@@ -589,6 +534,7 @@ def execute_pipeline_with_config(
 
 def generate_keyframes_with_progress(
     keyframe_prompts: List[str],
+    video_prompts: List[Dict],
     config: Dict[str, Any],
     output_dir: str,
     cancellation_token: CancellationToken,
@@ -613,27 +559,18 @@ def generate_keyframes_with_progress(
     Returns:
         List of keyframe file paths
     """
-    from pipeline import generate_keyframes
+    from pipeline import prepare_keyframes
     
     # Check for cancellation before starting
     if check_cancellation(cancellation_token, job_id):
         raise InterruptedError("Job cancelled before keyframe generation")
     
     try:
-        # Generate keyframes using existing pipeline function
-        keyframe_paths = generate_keyframes(
-            keyframe_prompts=keyframe_prompts,
+        keyframe_paths = prepare_keyframes(
             config=config,
+            keyframe_prompts=keyframe_prompts,
+            video_prompts=video_prompts,
             output_dir=output_dir,
-            model_name=config.get('image_generation_model'),
-            imageRouter_api_key=config.get('image_router_api_key'),
-            stability_api_key=config.get('stability_api_key'),
-            openai_api_key=config.get('openai_api_key'),
-            gemini_api_key=config.get('gemini_api_key'),
-            initial_image_path=config.get('initial_image'),
-            image_size=config.get('image_size'),
-            reference_images_dir=config.get('reference_images_dir'),
-            max_retries=3
         )
         
         # Update progress

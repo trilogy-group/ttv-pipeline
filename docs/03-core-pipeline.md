@@ -197,7 +197,6 @@ graph TD
         A --> C[videos/]
         A --> D[extracted_frames/]
         A --> E[enhanced_prompt.json]
-        A --> F[config.yaml]
         A --> G[final_video.mp4]
         
         B --> B1[segment_00.png]

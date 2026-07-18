@@ -4,91 +4,71 @@ Job management routes for the API server.
 This module contains the job creation, status, and management endpoints.
 """
 
-from fastapi import APIRouter, HTTPException, Request, Depends, BackgroundTasks
-from datetime import datetime, timezone, timedelta
-from typing import Optional, List
-import uuid
+from datetime import datetime, timedelta, timezone
+from typing import List
 
-from api.models import (
-    JobCreateRequest, JobCreateResponse, JobStatusResponse,
-    ArtifactResponse, LogsResponse, JobCancelResponse, JobStatus
-)
-from api.exceptions import APIException
+from fastapi import APIRouter, HTTPException, Request
+
+from api.config_merger import ConfigMerger
 from api.logging_config import get_logger
+from api.models import JobCreateRequest, JobCreateResponse, JobStatus, JobStatusResponse
+from api.queue import JobQueue
 
 logger = get_logger(__name__)
 router = APIRouter(tags=["jobs"])
 
 
-def get_app_state(request: Request) -> dict:
-    """Get the application state from the request"""
-    # FastAPI's app.state stores attributes directly on the state object
-    state_dict = {}
-    for key in dir(request.app.state):
-        if not key.startswith('_'):
-            state_dict[key] = getattr(request.app.state, key)
-    return state_dict
-
-
-@router.post("/", response_model=JobCreateResponse, status_code=202)
-async def create_job(
-    request_obj: Request,
-    request: JobCreateRequest,
-    background_tasks: BackgroundTasks
-) -> JobCreateResponse:
+@router.post("", response_model=JobCreateResponse, status_code=202)
+async def create_job(request_obj: Request, request: JobCreateRequest) -> JobCreateResponse:
     """
     Create a new video generation job.
 
     Accepts only a prompt parameter and returns immediately with a task ID.
     The job is queued for processing and can be monitored via the status endpoint.
     """
-    from api.queue import JobQueue
-    
     # Get job queue from app state
-    job_queue: JobQueue = getattr(request_obj.app.state, 'job_queue', None)
+    job_queue: JobQueue = getattr(request_obj.app.state, "job_queue", None)
     if not job_queue:
         raise HTTPException(status_code=503, detail="Job queue not available")
-    
-    # Create and queue the job with basic configuration
-    effective_config = {
-        "prompt": request.prompt,
-        "generator": "minimax",  # Default generator
-        "parameters": {}
-    }
-    
-    job = job_queue.enqueue_job(
-        request=request,
-        effective_config=effective_config
+
+    api_config = getattr(request_obj.app.state, "config", None)
+    if not api_config or not isinstance(api_config.pipeline_config, dict):
+        raise HTTPException(status_code=503, detail="Pipeline configuration not available")
+
+    effective_config = ConfigMerger().merge_for_job(api_config.pipeline_config, request.prompt)
+    effective_config.update(
+        {
+            "gcs_bucket": api_config.gcs.bucket,
+            "gcs_prefix": api_config.gcs.prefix,
+            "credentials_path": api_config.gcs.credentials_path,
+            "signed_url_expiration": api_config.gcs.signed_url_expiration,
+        }
     )
-    
+
+    job = job_queue.enqueue_job(request=request, effective_config=effective_config)
+
     logger.info(f"Created job {job.id} with prompt: {request.prompt[:50]}...")
-    
-    return JobCreateResponse(
-        id=job.id,
-        status=job.status,
-        created_at=job.created_at
-    )
+
+    return JobCreateResponse(id=job.id, status=job.status, created_at=job.created_at)
 
 
-@router.get("/", response_model=List[JobStatusResponse])
+@router.get("", response_model=List[JobStatusResponse])
 async def list_jobs(
-    request_obj: Request,
-    limit: int = 100,
-    offset: int = 0
+    request_obj: Request, limit: int = 100, offset: int = 0
 ) -> List[JobStatusResponse]:
     """
     List recent jobs with pagination.
-    
+
     Returns a list of job status objects ordered by creation time.
     """
     # Get job queue from app state
-    job_queue: JobQueue = getattr(request_obj.app.state, 'job_queue', None)
+    job_queue: JobQueue = getattr(request_obj.app.state, "job_queue", None)
     if not job_queue:
         raise HTTPException(status_code=503, detail="Job queue not available")
-    
+
     # Get jobs list from queue
     jobs = job_queue.list_jobs(limit=limit, offset=offset)
-    
+
     return [
         JobStatusResponse(
             id=job.id,

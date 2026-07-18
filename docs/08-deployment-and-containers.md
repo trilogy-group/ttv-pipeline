@@ -31,7 +31,7 @@ This approach allows users to build only the specific image they need, without d
 
 **Key Architecture Components:**
 - **Base Layer**: NVIDIA CUDA 12.1.1 with Ubuntu 22.04
-- **Runtime Environment**: Python 3.10 with UV package management
+- **Runtime Environment**: Python 3.11 with UV package management
 - **Core Application**: TTV Pipeline with configurable backends
 - **Specialized Backends**: Separate images for each backend (FramePack, Wan2.1)
 - **Web Interface**: Pipeline-driven Gradio interface
@@ -79,7 +79,8 @@ Builds on `ttv-base` and adds:
     ├── models/               # Model checkpoints directory
     ├── outputs/              # Generated outputs directory
     ├── pipeline_config.yaml  # Pipeline configuration
-    └── requirements.txt      # Python dependencies
+    ├── pyproject.toml        # Python dependencies
+    └── uv.lock               # Locked dependency versions
 ```
 
 *Source: [`Dockerfile`](../Dockerfile)*
@@ -129,9 +130,8 @@ RUN curl -LsSf https://astral.sh/uv/install.sh -o /uv-installer.sh && \
 
 **Environment Setup:**
 ```dockerfile
-RUN uv venv --python 3.10 && \
+RUN uv sync --python 3.11 --no-dev && \
     uv pip install torch==2.0.1 torchvision==0.15.2 torchaudio==2.0.2 --index-url https://download.pytorch.org/whl/cu118 && \
-    uv pip install -r requirements.txt && \
     uv pip install gradio
 ```
 
@@ -170,7 +170,7 @@ The FramePack environment includes:
 
 **Core Components:**
 - **PyTorch Stack**: Core deep learning framework with CUDA support
-- **Application Requirements**: Dependencies specified in `requirements.txt`
+- **Application Requirements**: Dependencies specified in `pyproject.toml` and `uv.lock`
 - **Virtual Environment**: Isolated Python environment using UV
 
 **Dependency Management:**

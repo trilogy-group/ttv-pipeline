@@ -81,7 +81,7 @@ See the "Configuration" section for details on setting up different backends.
 - `keyframe_generator.py` - Handles generation of keyframes using Stability AI or OpenAI API
 - `pipeline_config.yaml.sample` - Comprehensive sample configuration file. Copy to `pipeline_config.yaml` and customize for your API keys, preferred backends (local Wan2.1, Runway, Google Veo, Minimax), generation parameters, and other settings.
 - `setup.sh` - Script to set up the environment and download necessary models for local generation.
-- `requirements.txt` - Python dependencies for the project.
+- `pyproject.toml` and `uv.lock` - Authoritative Python dependencies and reproducible lockfile.
 - `generators/` - Directory containing the video generator abstraction layer, including interfaces and specific backend implementations (local and remote).
 
 ### Directory Structure
@@ -179,7 +179,8 @@ Remote backends (Runway, Veo3, Minimax) manage their own scaling and do not use 
 ## Setup and Requirements
 
 ### Dependencies
-- Python 3.10+ (Not yet tested on Python 3.12 & Cuda 12.9 for Wan2.1 - coming soon!)
+- Python 3.11 (managed automatically by `uv` from `.python-version`).
+- [`uv`](https://docs.astral.sh/uv/) for environment and dependency management.
 - For Keyframe Generation: Stability AI API or OpenAI gpt-image-1 API key.
 - For Prompt Enhancement: OpenAI API key.
 - For Local Video Generation (Wan2.1): Wan2.1 I2V model (for chaining mode) or FLF2V model (for keyframe mode). Download via `setup.sh`.
@@ -194,14 +195,19 @@ Remote backends (Runway, Veo3, Minimax) manage their own scaling and do not use 
    cd ttv-pipeline
    ```
 
-2. Copy the sample configuration and add your API keys and preferences:
+2. Create the Python 3.11 development environment:
+   ```bash
+   uv sync --extra dev
+   ```
+
+3. Copy the sample configuration and add your API keys and preferences:
    ```bash
    cp pipeline_config.yaml.sample pipeline_config.yaml
    # Edit pipeline_config.yaml to add your API keys for OpenAI, Stability, Runway, Google Cloud, Minimax, etc.
    # Configure your default_backend, model paths (if using local), and other parameters.
    ```
 
-3. If using local Wan2.1 generation, run the setup script to download required frameworks and models:
+4. If using local Wan2.1 generation, run the setup script to download required frameworks and models:
    ```bash
    # Make the script executable
    chmod +x setup.sh
@@ -210,12 +216,12 @@ Remote backends (Runway, Veo3, Minimax) manage their own scaling and do not use 
    ./setup.sh
    ```
    *Note: To also set up FramePack (optional local generator), edit the `setup.sh` script and uncomment the `setup_framepack` function call before running.* 
-   If you are only using remote APIs for video generation, you might not need to run the full `setup.sh` script, but ensure Python dependencies from `requirements.txt` are installed.
+   Remote-only development needs only `uv sync --extra dev`; `setup.sh` is for optional local model frameworks and weights.
 
 ## Usage
 
 ```bash
-python pipeline.py --config pipeline_config.yaml
+uv run python pipeline.py --config pipeline_config.yaml
 ```
 
 ## How It Works
@@ -250,7 +256,6 @@ python pipeline.py --config pipeline_config.yaml
 /output
   /frames  - Contains generated keyframe images
   /videos  - Contains generated video segments
-  config.yaml - Copy of used configuration
   enhanced_prompt.json - Enhanced prompt data
   final_video.mp4 - Final stitched video (when multiple segments are generated)
 ```

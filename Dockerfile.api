@@ -31,29 +31,20 @@ WORKDIR /app
 # Install UV for faster dependency management
 RUN pip install uv
 
-# Copy dependency files
-COPY pyproject.toml ./
+# Copy locked dependency metadata first for cacheable installs
+COPY pyproject.toml uv.lock ./
 
-# Create virtual environment and install dependencies
-RUN uv venv .venv --python /usr/local/bin/python3 && \
-    uv pip install .
+# Install locked runtime dependencies; the project itself is copied later.
+RUN uv sync --frozen --no-dev --no-install-project
 
 # Development stage
 FROM base as development
 
-# Install development dependencies
-RUN uv pip install \
-    pytest>=8.0.0 \
-    pytest-asyncio>=0.23.0 \
-    pytest-trio>=0.8.0 \
-    pytest-cov>=4.0.0 \
-    black>=23.0.0 \
-    isort>=5.12.0 \
-    mypy>=1.7.0 \
-    ruff>=0.1.0
-
 # Copy source code
 COPY . .
+
+# Install the project and its locked development dependencies.
+RUN uv sync --frozen --extra dev
 
 # Change ownership to app user
 RUN chown -R app:app /app
@@ -70,6 +61,9 @@ FROM base as production-base
 
 # Copy source code (excluding large files via .dockerignore)
 COPY . .
+
+# Install the project itself without development dependencies.
+RUN uv sync --frozen --no-dev
 
 # Remove development files and clean up
 RUN rm -rf tests/ examples/ docs/ .git/ .pytest_cache/ __pycache__/ \

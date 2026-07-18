@@ -49,7 +49,8 @@ ttv-pipeline/
 ├── pipeline.py             # Main pipeline orchestrator
 ├── pipeline_config.yaml    # Configuration (git-ignored)
 ├── pipeline_config.yaml.sample  # Configuration template
-├── requirements.txt        # Python dependencies
+├── pyproject.toml          # Authoritative Python dependencies
+├── uv.lock                 # Reproducible dependency lock
 ├── setup.sh               # Installation script
 ├── Dockerfile             # Container configuration
 └── README.md              # Project documentation
@@ -94,7 +95,7 @@ The project excludes several categories of files from version control to maintai
 2. Run `setup.sh` for initial configuration
 3. Copy `pipeline_config.yaml.sample` to `pipeline_config.yaml`
 4. Configure API keys and backend settings
-5. Install dependencies via `requirements.txt`
+5. Install dependencies with `uv sync --extra dev`
 
 **Development Phase:**
 1. Create feature branches for new functionality
@@ -178,7 +179,7 @@ The configuration system uses a template-based approach:
 
 **Build Artifacts:**
 - **Containers**: Dockerfile for deployment
-- **Dependencies**: requirements.txt for Python packages
+- **Dependencies**: `pyproject.toml` plus `uv.lock` for Python packages
 - **Scripts**: Shell scripts for automation
 
 ### Archive and Distribution
@@ -250,7 +251,7 @@ The configuration system uses a template-based approach:
 ### Configuration Files
 - **`pipeline_config.yaml.sample`**: Template with all options
 - **`pipeline_config.yaml`**: User configuration (git-ignored)
-- **`requirements.txt`**: Python dependencies
+- **`pyproject.toml` / `uv.lock`**: Python dependency declarations and lockfile
 - **`.gitignore`**: Version control exclusions
 
 ### Core Scripts

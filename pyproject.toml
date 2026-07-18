@@ -7,7 +7,7 @@ name = "ttv-pipeline-api"
 version = "0.1.0"
 description = "TTV Pipeline API Server with HTTP/3 support"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.12"
 dependencies = [
     # API Server dependencies
     "fastapi>=0.104.0",
@@ -53,6 +53,12 @@ dev = [
     "ruff>=0.1.0",
 ]
 
+[tool.setuptools]
+py-modules = ["frame_extractor", "keyframe_generator", "pipeline", "video_generator_interface"]
+
+[tool.setuptools.packages.find]
+include = ["api*", "generators*", "workers*"]
+
 [tool.pytest.ini_options]
 # Test discovery
 testpaths = ["tests"]
@@ -81,7 +87,7 @@ addopts = [
 ]
 
 # Asyncio configuration
-asyncio_mode = "auto"
+asyncio_mode = "strict"
 
 # Filtering
 filterwarnings = [
@@ -148,6 +154,8 @@ ignore_missing_imports = true
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+
+[tool.ruff.lint]
 select = [
     "E",  # pycodestyle errors
     "W",  # pycodestyle warnings
@@ -163,7 +171,7 @@ ignore = [
     "C901",  # too complex
 ]
 
-[tool.ruff.per-file-ignores]
+[tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"]
 "tests/*" = ["B011"]
 

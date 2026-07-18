@@ -73,16 +73,16 @@ class TestSecurityHeadersMiddleware:
                docs_response.headers["Cache-Control"] != "no-cache, no-store, must-revalidate"
 
     def test_cache_control_for_jobs_endpoints(self):
-        """Test that cache control headers are added for /jobs endpoints."""
+        """Test that cache control headers are added for /v1/jobs endpoints."""
         app = FastAPI()
         app.add_middleware(SecurityHeadersMiddleware)
 
-        @app.get("/jobs/test")
+        @app.get("/v1/jobs/test")
         async def jobs_endpoint():
             return {"message": "api"}
 
         client = TestClient(app)
-        response = client.get("/jobs/test")
+        response = client.get("/v1/jobs/test")
 
         assert response.headers["Cache-Control"] == "no-cache, no-store, must-revalidate"
         assert response.headers["Pragma"] == "no-cache"
@@ -92,8 +92,9 @@ class TestSecurityHeadersMiddleware:
 class TestRequestLoggingMiddleware:
     """Test request logging middleware"""
     
-    @patch('api.middleware.logger')
-    def test_logs_request_and_response(self, mock_logger):
+    @patch('api.middleware.log_api_response')
+    @patch('api.middleware.log_api_request')
+    def test_logs_request_and_response(self, mock_request_log, mock_response_log):
         """Test that requests and responses are logged with correlation IDs"""
         app = FastAPI()
         app.add_middleware(RequestLoggingMiddleware)
@@ -109,30 +110,17 @@ class TestRequestLoggingMiddleware:
         assert "X-Correlation-ID" in response.headers
         correlation_id = response.headers["X-Correlation-ID"]
         
-        # Check that logging was called
-        assert mock_logger.info.call_count >= 2  # Request start and complete
-        
-        # Verify log structure
-        log_calls = mock_logger.info.call_args_list
-        request_log = log_calls[0][1]['extra']  # First call should be request start
-        
-        assert request_log['event'] == 'request_start'
-        assert request_log['correlation_id'] == correlation_id
-        assert request_log['method'] == 'GET'
-        assert request_log['path'] == '/test'
+        mock_request_log.assert_called_once()
+        assert mock_request_log.call_args.kwargs['correlation_id'] == correlation_id
+        assert mock_request_log.call_args.kwargs['method'] == 'GET'
+        assert mock_request_log.call_args.kwargs['path'] == '/test'
+        mock_response_log.assert_called_once()
     
     def test_redacts_sensitive_headers(self):
         """Test that sensitive headers are redacted in logs"""
         app = FastAPI()
         
-        # Mock logger to capture log data
-        logged_data = []
-        
-        def mock_log_info(message, extra=None):
-            if extra:
-                logged_data.append(extra)
-        
-        with patch('api.middleware.logger.info', side_effect=mock_log_info):
+        with patch('api.middleware.log_api_request') as mock_request_log:
             app.add_middleware(RequestLoggingMiddleware)
             
             @app.get("/test")
@@ -142,18 +130,12 @@ class TestRequestLoggingMiddleware:
             client = TestClient(app)
             response = client.get("/test", headers={"Authorization": "Bearer secret-token"})
             
-            # Find the request log entry
-            request_log = None
-            for log_entry in logged_data:
-                if log_entry.get('event') == 'request_start':
-                    request_log = log_entry
-                    break
-            
-            assert request_log is not None
-            assert request_log['headers']['authorization'] == '[REDACTED]'
+            assert response.status_code == 200
+            headers = mock_request_log.call_args.kwargs['headers']
+            assert headers['authorization'] == '[REDACTED]'
     
-    @patch('api.middleware.logger')
-    def test_logs_request_errors(self, mock_logger):
+    @patch('api.middleware.log_api_error')
+    def test_logs_request_errors(self, mock_error_log):
         """Test that request errors are logged properly"""
         app = FastAPI()
         app.add_middleware(RequestLoggingMiddleware)
@@ -170,10 +152,8 @@ class TestRequestLoggingMiddleware:
         except:
             pass
         
-        # Check that error was logged
-        mock_logger.error.assert_called()
-        error_call = mock_logger.error.call_args
-        assert 'request_error' in str(error_call)
+        mock_error_log.assert_called_once()
+        assert isinstance(mock_error_log.call_args.args[1], ValueError)
 
 
 class TestRateLimitMiddleware:
@@ -357,12 +337,12 @@ class TestAuthTokenMiddleware:
         app.add_middleware(AuthTokenMiddleware)
         app.state.config = SimpleNamespace(security=SimpleNamespace(auth_token="test-token"))
 
-        @app.get("/jobs/test")
+        @app.get("/v1/jobs/test")
         async def test_endpoint():
             return {"message": "ok"}
 
         client = TestClient(app)
-        response = client.get("/jobs/test")
+        response = client.get("/v1/jobs/test")
 
         assert response.status_code == 401
         assert response.json()["error"] == "Unauthorized"
@@ -372,12 +352,12 @@ class TestAuthTokenMiddleware:
         app.add_middleware(AuthTokenMiddleware)
         app.state.config = SimpleNamespace(security=SimpleNamespace(auth_token="test-token"))
 
-        @app.get("/jobs/test")
+        @app.get("/v1/jobs/test")
         async def test_endpoint():
             return {"message": "ok"}
 
         client = TestClient(app)
-        response = client.get("/jobs/test", headers={"Authorization": "Bearer test-token"})
+        response = client.get("/v1/jobs/test", headers={"Authorization": "Bearer test-token"})
 
         assert response.status_code == 200
         assert response.json()["message"] == "ok"
@@ -387,11 +367,11 @@ class TestAuthTokenMiddleware:
         app.add_middleware(AuthTokenMiddleware)
         app.state.config = SimpleNamespace(security=SimpleNamespace(auth_token=None))
 
-        @app.get("/jobs/test")
+        @app.get("/v1/jobs/test")
         async def test_endpoint():
             return {"message": "ok"}
 
         client = TestClient(app)
-        response = client.get("/jobs/test")
+        response = client.get("/v1/jobs/test")
 
         assert response.status_code == 200

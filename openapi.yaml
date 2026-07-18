@@ -37,7 +37,7 @@ paths:
                     type: string
                     example: "/docs"
 
-  /jobs:
+  /v1/jobs:
     post:
       summary: Create a new video generation job
       description: Accepts a text prompt and queues a video generation job
@@ -94,7 +94,7 @@ paths:
                 items:
                   $ref: '#/components/schemas/JobStatusResponse'
 
-  /jobs/{job_id}:
+  /v1/jobs/{job_id}:
     get:
       summary: Get job status
       description: Returns the current status and details of a specific job
@@ -121,7 +121,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
-  /jobs/{job_id}/video-url:
+  /v1/jobs/{job_id}/video-url:
     get:
       summary: Get signed video URL
       description: Returns a time-limited signed URL for streaming or downloading the generated video

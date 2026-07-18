@@ -1,6 +1,6 @@
 # TTV Pipeline Recovery and Product Roadmap
 
-Status: Phase 0 complete; Phase 1 pending
+Status: Phase 1 complete; Phase 2 pending
 Last updated: 2026-07-18
 Workspace: `/Users/magos/dev/kumanday/Parlina/ttv-pipeline`
 
@@ -127,29 +127,65 @@ Phase 0 validation:
 
 ## Phase 1 - Establish a trustworthy baseline
 
-Status: pending
+Status: complete
 
 Goal: make CLI/API behavior testable and consistent before new product work.
 
-Candidate one-off tasks:
+Completed one-off tasks:
 
-- Standardize development on Python 3.11 and `uv sync --extra dev`; make
+- [x] Standardize development on Python 3.11 and `uv sync --extra dev`; make
   `pyproject.toml` the dependency source of truth.
-- Make threading and Trio workers use the effective configuration stored with
+- [x] Make threading and Trio workers use the effective configuration stored with
   each job instead of rebuilding prompt-only configuration.
-- Resolve the `/jobs` versus `/v1/jobs` contract mismatch.
-- Share CLI frame preparation and frame-path resolution with API workers.
-- Fix remote fallback exception handling and reversed fallback arguments.
-- Stop persisting unredacted configuration/API keys in output directories.
-- Add one mocked API-to-worker smoke test.
-- Decide whether to fix the legacy HTTP/3/Nginx deployment path or delete it if
-  it is not an actual deployment requirement.
+- [x] Resolve the `/jobs` versus `/v1/jobs` contract mismatch.
+- [x] Share CLI frame preparation and frame-path resolution with API workers.
+- [x] Fix remote fallback exception handling and reversed fallback arguments.
+- [x] Stop persisting unredacted configuration/API keys in output directories.
+- [x] Add one mocked API-to-worker smoke test.
+
+Deferred cleanup:
+
+- Decide whether to fix the legacy Angie/HTTP/3 deployment path or delete it.
+  It is not required by the requested Phase 1 slice and its historical tests
+  reference files that are not present in the repository.
 
 Exit criteria:
 
 - A documented local setup command creates a runnable environment.
 - Focused CLI, API, worker, and config tests pass from that environment.
 - The effective job configuration reaches the generation pipeline unchanged.
+
+Phase 1 result:
+
+- `.python-version` pins Python 3.11; `uv.lock` is committed alongside
+  `pyproject.toml`, and root `requirements.txt` was removed.
+- The supported development bootstrap is `uv sync --extra dev`.
+- API jobs are canonical at `/v1/jobs`; middleware, OpenAPI, examples, and
+  smoke tests use the same prefix. The unversioned `/jobs` route returns 404.
+- Job creation stores the merged pipeline and GCS configuration. Both worker
+  modes pass that stored effective configuration to the pipeline unchanged.
+- `prepare_keyframes` now owns initial-frame generation/preservation and safe
+  first/last-frame path resolution for CLI and API workers.
+- Remote fallback catches the generator interface's real exception type and
+  calls the fallback factory with `(primary_backend, config)`.
+- CLI and worker output directories no longer receive full configuration YAML
+  files containing API keys.
+- The Trio job path no longer duplicates Redis initialization, constructs the
+  private `trio.Cancelled` exception, or leaks successful-job temp directories.
+
+Phase 1 validation:
+
+- `uv sync --extra dev`: succeeds with CPython 3.11.13.
+- Focused Phase 1 suite: 60 passed.
+- `uv lock --check`, Python compilation, `bash -n setup.sh`, and
+  `git diff --check`: pass.
+- `uv build` produces a wheel containing the API, workers, generators, and
+  top-level pipeline modules.
+- Full historical suite baseline: 336 passed, 104 failed, 4 skipped. The
+  failures cluster in missing legacy Angie assets, obsolete API fixtures and
+  removed artifact/log/cancel routes, old monitoring assumptions, and separate
+  Trio executor tests. They are recorded as legacy cleanup outside this focused
+  gate rather than hidden by it.
 
 ## Phase 2 - Veo 3.1 and requested duration
 
