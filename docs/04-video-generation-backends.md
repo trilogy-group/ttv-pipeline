@@ -142,8 +142,8 @@ minimax:
   model: "I2V-01-Director"
 
 fal:
-  api_key: "${FAL_API_KEY}"
-  model: "fal-ai/minimax/hailuo-02/standard/image-to-video"
+  api_key: "${FAL_KEY}"
+  model: "bytedance/seedance-2.0/image-to-video"
 ```
 
 ### Backend Selection Logic
@@ -288,8 +288,8 @@ minimax:
 ```yaml
 default_backend: "fal"
 fal:
-  api_key: "${FAL_API_KEY}"
-  model: "fal-ai/minimax/hailuo-02/standard/image-to-video"
+  api_key: "${FAL_KEY}"
+  model: "bytedance/seedance-2.0/image-to-video"
 ```
 
 **HunyuanVideo:**

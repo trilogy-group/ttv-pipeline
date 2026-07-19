@@ -1,6 +1,6 @@
 # TTV Pipeline Recovery and Product Roadmap
 
-Status: Phase 2 complete; Phase 3 pending
+Status: Phase 3 complete; Phase 4 pending
 Last updated: 2026-07-19
 Workspace: `/Users/magos/dev/kumanday/Parlina/ttv-pipeline`
 
@@ -280,7 +280,7 @@ Phase 2 validation:
 
 ## Phase 3 - Make fal.ai a first-class provider
 
-Status: pending
+Status: complete
 Priority: next product phase
 Execution: one bounded feature PR; split only if a model requires a materially
 different asset workflow
@@ -451,19 +451,19 @@ Phase 7 design rather than adding them to visual preparation opportunistically.
 
 ### Required work
 
-- [ ] Replace the direct synchronous call with queue submit/status/result/cancel.
-- [ ] Add the four concrete model profiles above and correct capability claims.
-- [ ] Route first and last keyframes and duration through the selected profile.
-- [ ] Remove generic payload injection and recursive URL discovery for profiled
+- [x] Replace the direct synchronous call with queue submit/status/result/cancel.
+- [x] Add the four concrete model profiles above and correct capability claims.
+- [x] Route first and last keyframes and duration through the selected profile.
+- [x] Remove generic payload injection and recursive URL discovery for profiled
       endpoints.
-- [ ] Add rate-limit, safe-retry, deadline, cancellation, and typed-error handling.
-- [ ] Preserve only queue-required request identity for later reconciliation;
+- [x] Add rate-limit, safe-retry, deadline, cancellation, and typed-error handling.
+- [x] Preserve only queue-required request identity for later reconciliation;
       stop treating speculative headers as cost records.
-- [ ] Remove the current speculative metrics sidecar; metrics persistence remains
+- [x] Remove the current speculative metrics sidecar; metrics persistence remains
       outside this phase.
-- [ ] Update sample configuration and provider documentation with supported
+- [x] Update sample configuration and provider documentation with supported
       endpoint IDs and their capabilities.
-- [ ] Add mocked request-contract and queue-lifecycle tests.
+- [x] Add mocked request-contract and queue-lifecycle tests.
 
 ### Exit criteria
 
@@ -478,6 +478,18 @@ Phase 7 design rather than adding them to visual preparation opportunistically.
   reconciliation without persisting prompts, images, API keys, or a new metrics
   store.
 - Seedance 2.5 remains unavailable until the release checklist passes.
+
+Phase 3 validation:
+
+- `uv run pytest tests/test_fal_generator.py tests/test_veo31_duration.py -q`:
+  34 passed on Python 3.14.3.
+- `uv run ruff check generators/remote/fal_generator.py
+  tests/test_fal_generator.py`: passed.
+- `uv run mypy --follow-imports=skip generators/remote/fal_generator.py`: passed.
+- `uv run pytest -q`: 373 passed, 103 failed, 4 skipped. The failures reproduce
+  the existing unrelated baseline around absent Angie assets, legacy API test
+  fixtures without Redis/GCS readiness, and Trio compatibility; no fal or
+  requested-duration test failed.
 
 Sources reviewed 2026-07-19:
 
@@ -733,4 +745,8 @@ Create these only after the outline and relevant spike are approved:
   transport work, while keeping the unreleased Seedance 2.5 limits gated.
 - Isolated audio references, audio timelines, splicing, mixing, and final muxing
   in Phase 7 so visual preparation and review phases remain modular.
-- No Phase 3 implementation changes were made.
+- Implemented the first-class fal provider on `feat/fal-first-class-provider`:
+  eight released endpoint IDs across four model families, queue lifecycle,
+  safe retry and cancellation, exact payload/output contracts, profiled duration
+  planning, ephemeral reconciliation metadata, updated configuration/docs, and
+  mocked contract/lifecycle coverage. Seedance 2.5 remains release-gated.

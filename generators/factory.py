@@ -159,11 +159,13 @@ def create_video_generator(backend: str, config: Dict[str, Any]) -> VideoGenerat
             backend_config = {
                 "api_key": fal_config.get("api_key"),
                 "model": fal_config.get("model"),
-                "base_url": fal_config.get("base_url", "https://fal.run"),
-                "max_duration": fal_config.get("max_duration", 10),
+                "base_url": fal_config.get("base_url", "https://queue.fal.run"),
                 "default_input": fal_config.get("default_input", {}),
                 "max_retries": remote_settings.get("max_retries", 3),
+                "polling_interval": remote_settings.get("polling_interval", 5),
                 "timeout": remote_settings.get("timeout", 600),
+                "http_timeout": remote_settings.get("http_timeout", 30),
+                "queue_start_timeout": fal_config.get("queue_start_timeout", 300),
             }
 
             if not backend_config["model"]:
@@ -171,9 +173,9 @@ def create_video_generator(backend: str, config: Dict[str, Any]) -> VideoGenerat
 
             if not backend_config["api_key"]:
                 import os
-                if not os.getenv("FAL_API_KEY"):
+                if not (os.getenv("FAL_KEY") or os.getenv("FAL_API_KEY")):
                     raise VideoGenerationError(
-                        "fal.ai API key is required but not provided (set config fal.api_key or FAL_API_KEY)"
+                        "fal.ai API key is required but not provided (set config fal.api_key or FAL_KEY)"
                     )
         
         # Create the generator instance

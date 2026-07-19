@@ -427,7 +427,7 @@ def test_cli_rejects_unsupported_duration_before_generation():
             "single_keyframe_mode": True,
         },
     ), patch("pipeline.enhance_prompt") as enhance_prompt:
-        with pytest.raises(ValueError, match="supported only for the veo3 backend"):
+        with pytest.raises(ValueError, match="supported only for veo3 and fal backends"):
             run_pipeline("config.yaml", duration_seconds=6)
 
     enhance_prompt.assert_not_called()

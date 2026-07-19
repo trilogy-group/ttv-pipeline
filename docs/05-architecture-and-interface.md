@@ -87,9 +87,10 @@ The factory handles backend-specific configuration extraction, mapping general c
 - `google_veo.region`: GCP region for processing
 
 **fal.ai Configuration:**
-- `fal.api_key`: fal.ai API key (or `FAL_API_KEY`)
-- `fal.model`: fal model endpoint ID
-- `fal.default_input`: model-specific input defaults
+- `fal.api_key`: fal.ai API key (or `FAL_KEY`; legacy `FAL_API_KEY` also works)
+- `fal.model`: exact endpoint ID for a tested model profile
+- `fal.default_input`: documented profile fields, validated before submission
+- `fal.queue_start_timeout`: queue-start deadline; total wait uses `remote_api_settings.timeout`
 
 *Source: [`generators/factory.py`](../generators/factory.py)*
 
@@ -169,7 +170,7 @@ graph LR
     minimax --> minimax_max_duration[max_duration]
 
     %% fal.ai Configuration
-    fal --> fal_api_key[api_key or FAL_API_KEY]
+    fal --> fal_api_key[api_key or FAL_KEY]
     fal --> fal_model[model]
     fal --> fal_base_url[base_url]
     fal --> fal_default_input[default_input]

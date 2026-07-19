@@ -28,6 +28,10 @@ from pydantic import BaseModel
 from api.config_merger import ConfigMerger
 from frame_extractor import extract_last_frame
 from generators.factory import create_video_generator, get_fallback_generator
+from generators.remote.fal_generator import (
+    fal_profile_supports_last_frame,
+    get_fal_clip_durations,
+)
 from video_generator_interface import (
     APIError,
     GenerationTimeoutError,
@@ -199,6 +203,25 @@ def get_video_generation_backend(config: Dict) -> str:
     return str(default_backend).lower()
 
 
+def _normalized_backend(backend: str) -> str:
+    name = str(backend).lower()
+    if name in {"fal", "fal.ai", "falgenerator"}:
+        return "fal"
+    if name in {"veo3", "veo3generator"}:
+        return "veo3"
+    return name
+
+
+def get_backend_clip_durations(config: Dict) -> tuple[int, ...] | None:
+    """Return the active provider's allowed clip lengths, when constrained."""
+    backend = _normalized_backend(get_video_generation_backend(config))
+    if backend == "veo3":
+        return VEO_CLIP_DURATIONS
+    if backend == "fal":
+        return get_fal_clip_durations(config.get("fal", {}).get("model"))
+    return None
+
+
 def get_provider_compatible_duration(
     config: Dict,
     primary_backend: str,
@@ -206,9 +229,9 @@ def get_provider_compatible_duration(
     planned_duration: float,
 ) -> float:
     """Map fallback attempts to the receiving provider's duration contract."""
-    if str(primary_backend).lower() == "veo3" and str(attempt_backend).lower() != "veo3":
-        return config.get("segment_duration_seconds", 5.0)
-    if str(attempt_backend).lower() == "veo3" and planned_duration not in VEO_CLIP_DURATIONS:
+    primary = _normalized_backend(primary_backend)
+    attempt = _normalized_backend(attempt_backend)
+    if attempt == "veo3" and planned_duration not in VEO_CLIP_DURATIONS:
         return next(
             (
                 duration
@@ -217,6 +240,15 @@ def get_provider_compatible_duration(
             ),
             VEO_CLIP_DURATIONS[-1],
         )
+    if attempt == "fal":
+        durations = get_fal_clip_durations(config.get("fal", {}).get("model"))
+        if planned_duration not in durations:
+            return next(
+                (duration for duration in durations if duration >= planned_duration),
+                durations[-1],
+            )
+    if primary in {"veo3", "fal"} and attempt not in {"veo3", "fal"}:
+        return config.get("segment_duration_seconds", 5.0)
     return planned_duration
 
 
@@ -258,6 +290,52 @@ def plan_veo_segment_durations(duration_seconds: int) -> List[int]:
     return [8] * eights + [remainder]
 
 
+def plan_provider_segment_durations(
+    duration_seconds: int, allowed_durations: tuple[int, ...]
+) -> List[int]:
+    """Return a shortest exact provider plan, or the least-overrun plan."""
+    if allowed_durations == VEO_CLIP_DURATIONS:
+        return plan_veo_segment_durations(duration_seconds)
+    if (
+        isinstance(duration_seconds, bool)
+        or not isinstance(duration_seconds, int)
+        or duration_seconds <= 0
+    ):
+        raise ValueError("duration_seconds must be a positive integer")
+    if duration_seconds > MAX_REQUESTED_DURATION_SECONDS:
+        raise ValueError(
+            f"duration_seconds must be at most {MAX_REQUESTED_DURATION_SECONDS}"
+        )
+
+    limit = max(duration_seconds, allowed_durations[0]) + max(allowed_durations)
+    counts: list[int | None] = [None] * (limit + 1)
+    previous: list[tuple[int, int] | None] = [None] * (limit + 1)
+    counts[0] = 0
+    for total in range(limit + 1):
+        if counts[total] is None:
+            continue
+        for clip_duration in sorted(allowed_durations, reverse=True):
+            next_total = total + clip_duration
+            if next_total > limit:
+                continue
+            candidate_count = counts[total] + 1
+            if counts[next_total] is None or candidate_count < counts[next_total]:
+                counts[next_total] = candidate_count
+                previous[next_total] = (total, clip_duration)
+
+    for total in range(max(duration_seconds, min(allowed_durations)), limit + 1):
+        if counts[total] is not None:
+            plan = []
+            while total:
+                step = previous[total]
+                assert step is not None
+                predecessor, clip_duration = step
+                plan.append(clip_duration)
+                total = predecessor
+            return sorted(plan, reverse=True)
+    raise ValueError("No provider-compatible duration plan found")  # pragma: no cover
+
+
 def get_requested_segment_plan(config: Dict) -> Optional[List[int]]:
     """Build the current provider's segment plan when final duration is requested."""
     requested = config.get("duration_seconds")
@@ -277,13 +355,14 @@ def get_requested_segment_plan(config: Dict) -> Optional[List[int]]:
             "duration_seconds requires generation_mode=keyframe and "
             "single_keyframe_mode=true"
         )
-    if get_video_generation_backend(config) != "veo3":
-        raise ValueError("duration_seconds is currently supported only for the veo3 backend")
-    return plan_veo_segment_durations(int(requested))
+    durations = get_backend_clip_durations(config)
+    if durations is None:
+        raise ValueError("duration_seconds is currently supported only for veo3 and fal backends")
+    return plan_provider_segment_durations(int(requested), durations)
 
 
 def get_requested_job_timeout(config: Dict) -> int:
-    """Allow enough queue time for every planned Veo request plus pipeline overhead."""
+    """Allow enough queue time for every planned provider request plus pipeline overhead."""
     plan = get_requested_segment_plan(config)
     if not plan:
         return 3600
@@ -298,9 +377,19 @@ def get_duration_tradeoff(config: Dict) -> Optional[str]:
     plan = get_requested_segment_plan(config)
     requested = config.get("duration_seconds")
     if plan and sum(plan) > requested:
+        backend = _normalized_backend(get_video_generation_backend(config))
+        durations = get_backend_clip_durations(config)
+        has_last_frame = backend == "veo3" or fal_profile_supports_last_frame(
+            config.get("fal", {}).get("model")
+        )
+        ending = (
+            "the final clip's ending keyframe will not appear"
+            if has_last_frame
+            else "the final generated endpoint will be removed"
+        )
         return (
-            f"Requested {requested}s cannot be composed exactly from Veo clips {list(VEO_CLIP_DURATIONS)}; "
-            f"the {sum(plan)}s plan will be trimmed, so the final clip's ending keyframe will not appear."
+            f"Requested {requested}s cannot be composed exactly from {backend} clips {list(durations)}; "
+            f"the {sum(plan)}s plan will be trimmed, so {ending}."
         )
     return None
 
@@ -312,15 +401,19 @@ def get_trim_duration_seconds(config: Dict) -> Optional[int]:
 
 def build_prompt_enhancement_instructions(config: Dict) -> str:
     """Add only the active backend's prompt and duration constraints."""
-    backend = get_video_generation_backend(config)
+    backend = _normalized_backend(get_video_generation_backend(config))
     instructions = PROMPT_ENHANCEMENT_INSTRUCTIONS
     if backend == "minimax":
         instructions += "\n\nIMPORTANT: Each Minimax video prompt must be 500 characters or less."
-    elif backend == "veo3":
+    elif backend in {"veo3", "fal"}:
+        clip_durations = get_backend_clip_durations(config)
+        example_duration = min(clip_durations)
         instructions = instructions.replace(
-            '"total_duration_seconds": 10', '"total_duration_seconds": 8'
-        ).replace('"duration_seconds": 5', '"duration_seconds": 4')
-        instructions += "\n\nIMPORTANT: Each Veo video prompt must be 1000 characters or less."
+            '"total_duration_seconds": 10',
+            f'"total_duration_seconds": {example_duration * 2}',
+        ).replace('"duration_seconds": 5', f'"duration_seconds": {example_duration}')
+        if backend == "veo3":
+            instructions += "\n\nIMPORTANT: Each Veo video prompt must be 1000 characters or less."
         plan = get_requested_segment_plan(config)
         if plan:
             requested = int(config["duration_seconds"])
@@ -335,7 +428,7 @@ def build_prompt_enhancement_instructions(config: Dict) -> str:
         else:
             instructions += (
                 f"\nInfer the final runtime and segment count. Every video_prompt must include duration_seconds "
-                f"as one of {list(VEO_CLIP_DURATIONS)}, and segmentation_logic.total_duration_seconds must equal "
+                f"as one of {list(clip_durations)}, and segmentation_logic.total_duration_seconds must equal "
                 "the sum of those durations."
             )
     return instructions
@@ -343,7 +436,8 @@ def build_prompt_enhancement_instructions(config: Dict) -> str:
 
 def validate_prompt_enhancement(result: Dict, config: Dict) -> None:
     """Reject an LLM decomposition that does not match the provider duration plan."""
-    if get_video_generation_backend(config) != "veo3":
+    durations_allowed = get_backend_clip_durations(config)
+    if durations_allowed is None:
         return
 
     video_prompts = result["video_prompts"]
@@ -363,11 +457,11 @@ def validate_prompt_enhancement(result: Dict, config: Dict) -> None:
         not item.get("first_frame") or not item.get("last_frame")
         for item in video_prompts
     ):
-        raise ValueError("LLM Veo segments must include first_frame and last_frame")
+        raise ValueError("LLM provider segments must include first_frame and last_frame")
     if expected and durations != expected:
         raise ValueError(f"LLM durations {durations} do not match requested segment plan {expected}")
-    if not expected and any(duration not in VEO_CLIP_DURATIONS for duration in durations):
-        raise ValueError(f"LLM durations must use Veo values {list(VEO_CLIP_DURATIONS)}")
+    if not expected and any(duration not in durations_allowed for duration in durations):
+        raise ValueError(f"LLM durations must use provider values {list(durations_allowed)}")
 
     expected_total = int(config["duration_seconds"]) if expected else sum(durations)
     if segmentation.get("total_duration_seconds") != expected_total:
@@ -999,7 +1093,7 @@ def generate_video_segments_single_keyframe(
         )
 
         # Veo first/last-frame generation always starts from the first frame.
-        if backend == 'veo3':
+        if backend in {'veo3', 'fal', 'fal.ai'}:
             keyframe_path = prompt_item.get('first_frame')
         elif keyframe_position == 'first' and 'first_frame' in prompt_item:
             keyframe_path = prompt_item['first_frame']

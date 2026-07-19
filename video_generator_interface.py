@@ -128,10 +128,12 @@ class VideoGenerationError(Exception):
 
 class APIError(VideoGenerationError):
     """Exception for API-related errors"""
-    def __init__(self, message: str, status_code: Optional[int] = None, response_body: Optional[str] = None):
+    def __init__(self, message: str, status_code: Optional[int] = None,
+                 response_body: Optional[str] = None, error_type: Optional[str] = None):
         super().__init__(message)
         self.status_code = status_code
         self.response_body = response_body
+        self.error_type = error_type
 
 
 class GenerationTimeoutError(VideoGenerationError):

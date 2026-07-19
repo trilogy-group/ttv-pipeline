@@ -134,15 +134,15 @@ All pipeline behavior is controlled through `pipeline_config.yaml`. Copy `pipeli
     *   `runway_ml`: Settings for Runway ML, including `api_key`, `model_version`, etc.
     *   `google_veo`: Settings for Google Veo 3.1, including `project_id`, `credentials_path`, and optional `veo_model` (`veo-3.1-generate-001` by default or `veo-3.1-fast-generate-001`).
     *   `minimax`: Settings for Minimax API, including `api_key`, `model_version`, etc.
-    *   `fal`: Settings for fal.ai, including `api_key`, `model`, optional `base_url`, and optional `default_input`.
+    *   `fal`: Settings for a supported fal.ai model profile, including `api_key`, exact `model` endpoint, queue settings, and validated `default_input` fields. `FAL_KEY` is the preferred environment variable; `FAL_API_KEY` remains compatible.
 
 5.  **Remote API Settings (Common to all remote backends)**:
     *   `max_retries`, `timeout`: General settings for remote API calls.
     *   `fallback_backend`: (Optional) Specify a backend (e.g., "wan2.1", "runway", "minimax", "fal") to use if the `default_backend` (if it's a remote API) fails. If not set, or if the specified fallback also fails, the system may try other available registered backends.
 
-6.  **fal.ai Metrics Output**:
-    *   When `default_backend` is `fal`/`fal.ai`, response headers such as cost and timing are captured when available.
-    *   Metrics are saved next to generated video output as `<output>.metrics.json`.
+6.  **fal.ai Queue Metadata**:
+    *   fal jobs use the durable queue API and expose request ID, exact endpoint ID, queue metrics, billable units, and output metadata on `generator.last_request_metadata`.
+    *   Metadata is intentionally not written beside generated media; persistence and cost analytics are deferred.
 
 7.  **Cost Optimization**:
     *   `max_cost_per_video`, `prefer_local_when_available`.
@@ -153,7 +153,7 @@ All pipeline behavior is controlled through `pipeline_config.yaml`. Copy `pipeli
 
 9.  **Generation Parameters (Applies to all video backends)**:
     *   `segment_duration_seconds`: Desired duration for each video segment in seconds (e.g., 5.0). Crucial for chaining mode.
-    *   `duration_seconds`: Optional requested final runtime for Veo 3.1, up to 14,440 seconds. The pipeline plans 4, 6, or 8 second clips and trims only when no exact sum exists.
+    *   `duration_seconds`: Optional requested final runtime for direct Veo 3.1 or a supported fal profile, up to 14,440 seconds. The pipeline plans provider-compatible clips and trims only when no exact sum exists.
     *   `frame_num`, `sample_steps`, `guide_scale`, `base_seed`, etc.
 
 10.  **Output and Logging Configuration**.
