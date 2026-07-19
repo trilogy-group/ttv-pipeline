@@ -29,6 +29,7 @@ class JobCreateRequest(BaseModel):
     duration_seconds: Optional[StrictInt] = Field(
         None,
         gt=0,
+        le=14_440,
         description="Requested final runtime in seconds (currently supported by Veo 3)",
     )
     

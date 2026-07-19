@@ -179,6 +179,15 @@ Respond ONLY with the JSON response formatted as above, with NO wrapper or comme
 """
 
 VEO_CLIP_DURATIONS = (4, 6, 8)
+MAX_REQUESTED_DURATION_SECONDS = 14_440
+
+
+def get_video_generation_backend(config: Dict) -> str:
+    """Return the backend used for video generation."""
+    return str(
+        config.get("default_video_generation_backend")
+        or config.get("default_backend", "wan2.1")
+    ).lower()
 
 
 def plan_veo_segment_durations(duration_seconds: int) -> List[int]:
@@ -189,6 +198,10 @@ def plan_veo_segment_durations(duration_seconds: int) -> List[int]:
         or duration_seconds <= 0
     ):
         raise ValueError("duration_seconds must be a positive integer")
+    if duration_seconds > MAX_REQUESTED_DURATION_SECONDS:
+        raise ValueError(
+            f"duration_seconds must be at most {MAX_REQUESTED_DURATION_SECONDS}"
+        )
 
     planned_total = max(4, duration_seconds + duration_seconds % 2)
     eights, remainder = divmod(planned_total, 8)
@@ -210,7 +223,7 @@ def get_requested_segment_plan(config: Dict) -> Optional[List[int]]:
         or int(requested) != requested
     ):
         raise ValueError("duration_seconds must be a positive integer")
-    if config.get("default_backend", "wan2.1").lower() != "veo3":
+    if get_video_generation_backend(config) != "veo3":
         raise ValueError("duration_seconds is currently supported only for the veo3 backend")
     return plan_veo_segment_durations(int(requested))
 
@@ -234,7 +247,7 @@ def get_trim_duration_seconds(config: Dict) -> Optional[int]:
 
 def build_prompt_enhancement_instructions(config: Dict) -> str:
     """Add only the active backend's prompt and duration constraints."""
-    backend = config.get("default_backend", "wan2.1").lower()
+    backend = get_video_generation_backend(config)
     instructions = PROMPT_ENHANCEMENT_INSTRUCTIONS
     if backend == "minimax":
         instructions += "\n\nIMPORTANT: Each Minimax video prompt must be 500 characters or less."
@@ -262,7 +275,7 @@ def build_prompt_enhancement_instructions(config: Dict) -> str:
 
 def validate_prompt_enhancement(result: Dict, config: Dict) -> None:
     """Reject an LLM decomposition that does not match the provider duration plan."""
-    if config.get("default_backend", "wan2.1").lower() != "veo3":
+    if get_video_generation_backend(config) != "veo3":
         return
 
     video_prompts = result["video_prompts"]
@@ -278,6 +291,11 @@ def validate_prompt_enhancement(result: Dict, config: Dict) -> None:
         raise ValueError("LLM keyframe segments do not match the video segments")
     if segmentation.get("number_of_segments") != len(video_prompts):
         raise ValueError("LLM segment count does not match its prompts")
+    if any(
+        not item.get("first_frame") or not item.get("last_frame")
+        for item in video_prompts
+    ):
+        raise ValueError("LLM Veo segments must include first_frame and last_frame")
     if expected and durations != expected:
         raise ValueError(f"LLM durations {durations} do not match requested segment plan {expected}")
     if not expected and any(duration not in VEO_CLIP_DURATIONS for duration in durations):
@@ -823,7 +841,7 @@ def generate_video_segments_single_keyframe(
     video_paths = []
 
     # Get the video generation backend
-    backend = config.get('default_video_generation_backend', config.get('default_backend', 'veo3'))
+    backend = get_video_generation_backend(config)
     logging.info(f"Using {backend} for single-keyframe video generation")
 
     # Get I2I mode configuration
@@ -849,8 +867,10 @@ def generate_video_segments_single_keyframe(
         )
         last_frame_path = prompt_item.get("last_frame")
 
-        # Select the keyframe based on position setting
-        if keyframe_position == 'first' and 'first_frame' in prompt_item:
+        # Veo first/last-frame generation always starts from the first frame.
+        if backend == 'veo3':
+            keyframe_path = prompt_item.get('first_frame')
+        elif keyframe_position == 'first' and 'first_frame' in prompt_item:
             keyframe_path = prompt_item['first_frame']
         elif keyframe_position == 'last' and 'last_frame' in prompt_item:
             keyframe_path = prompt_item['last_frame']
@@ -898,6 +918,9 @@ def generate_video_segments_single_keyframe(
 
         except VideoGenerationError as e:
             logging.error(f"Failed to generate video for segment {seg}: {e}")
+
+            if config.get("duration_seconds") is not None:
+                raise
 
             # Try fallback if configured
             fallback_generator = factory.get_fallback_generator(backend, config)
@@ -1354,6 +1377,9 @@ def run_pipeline(
         http_overrides=None  # No HTTP overrides in CLI context
     )
 
+    # Reject unsupported or excessive requests before any generation work.
+    get_requested_segment_plan(config)
+
     base_dir = os.getcwd()  # Current working directory
     output_dir = os.path.join(base_dir, "output")
     frames_dir = os.path.join(output_dir, "frames")
@@ -1497,7 +1523,10 @@ def main():
     parser.add_argument(
         '--duration-seconds',
         type=int,
-        help='Requested final runtime in seconds (currently supported by Veo 3)',
+        help=(
+            'Requested final runtime in seconds '
+            f'(Veo 3 only; max {MAX_REQUESTED_DURATION_SECONDS})'
+        ),
     )
 
     args = parser.parse_args()

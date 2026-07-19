@@ -10,15 +10,18 @@ from api.models import JobCreateRequest
 from generators.factory import create_video_generator
 from generators.remote.veo3_generator import Veo3Generator
 from pipeline import (
+    MAX_REQUESTED_DURATION_SECONDS,
     build_prompt_enhancement_instructions,
     generate_video_segments_single_keyframe,
     get_duration_tradeoff,
     get_trim_duration_seconds,
     main,
     plan_veo_segment_durations,
+    run_pipeline,
     stitch_video_segments,
     validate_prompt_enhancement,
 )
+from video_generator_interface import VideoGenerationError
 
 
 def test_requested_duration_plan_and_llm_validation():
@@ -26,7 +29,11 @@ def test_requested_duration_plan_and_llm_validation():
     assert plan_veo_segment_durations(10) == [4, 6]
     assert plan_veo_segment_durations(17) == [8, 4, 6]
 
-    config = {"default_backend": "veo3", "duration_seconds": 9}
+    config = {
+        "default_backend": "wan2.1",
+        "default_video_generation_backend": "veo3",
+        "duration_seconds": 9,
+    }
     result = {
         "segmentation_logic": {
             "total_duration_seconds": 9,
@@ -38,8 +45,20 @@ def test_requested_duration_plan_and_llm_validation():
             {"segment": 2, "prompt": "second"},
         ],
         "video_prompts": [
-            {"segment": 1, "prompt": "first", "duration_seconds": 4},
-            {"segment": 2, "prompt": "second", "duration_seconds": 6},
+            {
+                "segment": 1,
+                "prompt": "first",
+                "first_frame": "provided_start_image.png",
+                "last_frame": "segment_01.png",
+                "duration_seconds": 4,
+            },
+            {
+                "segment": 2,
+                "prompt": "second",
+                "first_frame": "segment_01.png",
+                "last_frame": "segment_02.png",
+                "duration_seconds": 6,
+            },
         ],
     }
 
@@ -48,6 +67,11 @@ def test_requested_duration_plan_and_llm_validation():
     assert "ending keyframe will not appear" in get_duration_tradeoff(config)
     assert get_trim_duration_seconds(config) == 9
     assert get_trim_duration_seconds({"default_backend": "veo3", "duration_seconds": 10}) is None
+
+    result["video_prompts"][1]["last_frame"] = None
+    with pytest.raises(ValueError, match="first_frame and last_frame"):
+        validate_prompt_enhancement(result, config)
+    result["video_prompts"][1]["last_frame"] = "segment_02.png"
 
     result["video_prompts"][1]["duration_seconds"] = 8
     with pytest.raises(ValueError, match="requested segment plan"):
@@ -67,8 +91,20 @@ def test_omitted_duration_keeps_veo_planning_ai_inferred():
             {"segment": 2, "prompt": "second"},
         ],
         "video_prompts": [
-            {"segment": 1, "prompt": "first", "duration_seconds": 6},
-            {"segment": 2, "prompt": "second", "duration_seconds": 8},
+            {
+                "segment": 1,
+                "prompt": "first",
+                "first_frame": "provided_start_image.png",
+                "last_frame": "segment_01.png",
+                "duration_seconds": 6,
+            },
+            {
+                "segment": 2,
+                "prompt": "second",
+                "first_frame": "segment_01.png",
+                "last_frame": "segment_02.png",
+                "duration_seconds": 8,
+            },
         ],
     }
 
@@ -86,7 +122,10 @@ def test_pipeline_forwards_segment_duration_and_both_frames(tmp_path):
 
     with patch("generators.factory.create_video_generator", return_value=generator):
         generate_video_segments_single_keyframe(
-            {"default_backend": "veo3"},
+            {
+                "default_backend": "veo3",
+                "i2i_mode": {"keyframe_position": "last"},
+            },
             [{
                 "segment": 1,
                 "prompt": "move",
@@ -100,6 +139,30 @@ def test_pipeline_forwards_segment_duration_and_both_frames(tmp_path):
     assert generator.generate_video.call_args.kwargs["duration"] == 6
     assert generator.generate_video.call_args.kwargs["input_image_path"] == str(first_frame)
     assert generator.generate_video.call_args.kwargs["last_frame_path"] == str(last_frame)
+
+
+def test_requested_duration_disables_incompatible_fallback(tmp_path):
+    frame = tmp_path / "frame.png"
+    frame.touch()
+    generator = Mock()
+    generator.generate_video.side_effect = VideoGenerationError("Veo failed")
+
+    with patch("generators.factory.create_video_generator", return_value=generator), \
+         patch("generators.factory.get_fallback_generator") as get_fallback:
+        with pytest.raises(VideoGenerationError, match="Veo failed"):
+            generate_video_segments_single_keyframe(
+                {"default_backend": "veo3", "duration_seconds": 6},
+                [{
+                    "segment": 1,
+                    "prompt": "move",
+                    "first_frame": str(frame),
+                    "last_frame": str(frame),
+                    "duration_seconds": 6,
+                }],
+                str(tmp_path),
+            )
+
+    get_fallback.assert_not_called()
 
 
 def test_veo_factory_forwards_fast_model():
@@ -172,6 +235,23 @@ def test_trim_and_cli_duration_interfaces(tmp_path):
     run_pipeline.assert_called_once_with("config.yaml", None, 15)
 
 
-def test_api_rejects_boolean_duration():
+def test_duration_limit_and_api_validation():
+    assert sum(plan_veo_segment_durations(MAX_REQUESTED_DURATION_SECONDS)) == 14_440
+    with pytest.raises(ValueError, match="at most 14440"):
+        plan_veo_segment_durations(14_441)
+
     with pytest.raises(ValidationError):
         JobCreateRequest(prompt="move", duration_seconds=True)
+    with pytest.raises(ValidationError):
+        JobCreateRequest(prompt="move", duration_seconds=14_441)
+
+
+def test_cli_rejects_unsupported_duration_before_generation():
+    with patch(
+        "pipeline.load_config",
+        return_value={"prompt": "move", "default_backend": "wan2.1"},
+    ), patch("pipeline.enhance_prompt") as enhance_prompt:
+        with pytest.raises(ValueError, match="supported only for the veo3 backend"):
+            run_pipeline("config.yaml", duration_seconds=6)
+
+    enhance_prompt.assert_not_called()

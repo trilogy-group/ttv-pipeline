@@ -169,7 +169,7 @@ video_aspect_ratio: "16:9"  # Default to widescreen landscape
 
 # Video generation parameters (applies to all backends)
 segment_duration_seconds: 5.0 # Desired duration for each video segment in seconds
-# duration_seconds: 15        # Optional requested final runtime; Veo plans 4/6/8s clips and trims only if needed
+# duration_seconds: 15        # Optional requested final runtime (max 14440s); Veo plans 4/6/8s clips and trims only if needed
 frame_num: 81         # Number of frames (for ~5 seconds at 16fps)
 sample_steps: 40      # Sampling steps
 sample_shift: 5.0     # Sampling shift factor

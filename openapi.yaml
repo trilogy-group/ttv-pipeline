@@ -269,6 +269,7 @@ components:
         duration_seconds:
           type: integer
           minimum: 1
+          maximum: 14440
           nullable: true
           description: Requested final runtime in seconds (currently supported by Veo 3)
 

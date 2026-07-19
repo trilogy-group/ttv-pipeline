@@ -153,7 +153,7 @@ All pipeline behavior is controlled through `pipeline_config.yaml`. Copy `pipeli
 
 9.  **Generation Parameters (Applies to all video backends)**:
     *   `segment_duration_seconds`: Desired duration for each video segment in seconds (e.g., 5.0). Crucial for chaining mode.
-    *   `duration_seconds`: Optional requested final runtime for Veo 3.1. The pipeline plans 4, 6, or 8 second clips and trims only when no exact sum exists.
+    *   `duration_seconds`: Optional requested final runtime for Veo 3.1, up to 14,440 seconds. The pipeline plans 4, 6, or 8 second clips and trims only when no exact sum exists.
     *   `frame_num`, `sample_steps`, `guide_scale`, `base_seed`, etc.
 
 10.  **Output and Logging Configuration**.
