@@ -109,7 +109,8 @@ class ConfigMerger:
     def merge_for_job(
         self,
         base_config: Dict[str, Any],
-        job_prompt: str
+        job_prompt: str,
+        duration_seconds: Optional[int] = None,
     ) -> Dict[str, Any]:
         """
         Merge configuration for a specific job with HTTP prompt override.
@@ -117,12 +118,16 @@ class ConfigMerger:
         Args:
             base_config: Base pipeline configuration
             job_prompt: Prompt from HTTP request
+            duration_seconds: Optional requested final runtime
             
         Returns:
             Effective configuration for the job
         """
         # HTTP prompt takes highest precedence
-        http_overrides = {'prompt': job_prompt}
+        http_overrides = {
+            'prompt': job_prompt,
+            'duration_seconds': duration_seconds,
+        }
         
         effective_config = self.build_effective_config(
             base_config=base_config,

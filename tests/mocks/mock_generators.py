@@ -216,9 +216,9 @@ class MockVeo3Generator(MockVideoGenerator):
     def get_capabilities(self) -> Dict[str, Any]:
         capabilities = super().get_capabilities()
         capabilities.update({
-            "max_duration": 5.0,
+            "supported_durations": [4, 6, 8],
             "models": {
-                "veo-3.0-generate-preview": True
+                "veo-3.1-generate-001": True
             },
             "features": {
                 "motion_control": True,

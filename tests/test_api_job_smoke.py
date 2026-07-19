@@ -12,7 +12,9 @@ from workers.video_worker import process_video_job
 def test_mocked_api_job_reaches_worker_with_effective_config():
     pipeline_config = {
         "prompt": "default prompt",
-        "default_backend": "fal",
+        "default_backend": "veo3",
+        "generation_mode": "keyframe",
+        "single_keyframe_mode": True,
         "image_generation_model": "openai/gpt-image-1",
         "openai_api_key": "test-secret",
         "minimax": {"api_key": "nested-secret", "model": "I2V-01-Director"},
@@ -27,16 +29,25 @@ def test_mocked_api_job_reaches_worker_with_effective_config():
     app.state.job_queue = queue
     client = TestClient(app)
 
-    create_response = client.post("/v1/jobs", json={"prompt": "HTTP prompt"})
+    with patch.object(queue, "enqueue_job", wraps=queue.enqueue_job) as enqueue_job:
+        create_response = client.post(
+            "/v1/jobs",
+            json={"prompt": "HTTP prompt", "duration_seconds": 9},
+        )
     assert create_response.status_code == 202
+    assert enqueue_job.call_args.kwargs["job_timeout"] == 4800
+    assert "ending keyframe will not appear" in create_response.json()["warnings"][0]
     job_id = create_response.json()["id"]
     stored_config = queue.get_job(job_id).config.copy()
     assert stored_config == {
-        "default_backend": "fal",
+        "default_backend": "veo3",
+        "generation_mode": "keyframe",
+        "single_keyframe_mode": True,
         "image_generation_model": "openai/gpt-image-1",
         "openai_api_key": "[REDACTED]",
         "minimax": {"api_key": "[REDACTED]", "model": "I2V-01-Director"},
         "prompt": "HTTP prompt",
+        "duration_seconds": 9,
         "gcs_bucket": "test-bucket",
         "gcs_prefix": "ttv-api",
         "credentials_path": "[REDACTED]",
@@ -55,6 +66,7 @@ def test_mocked_api_job_reaches_worker_with_effective_config():
     assert execute.call_args.kwargs["config"] == {
         **pipeline_config,
         "prompt": "HTTP prompt",
+        "duration_seconds": 9,
         "gcs_bucket": "test-bucket",
         "gcs_prefix": "ttv-api",
         "credentials_path": "test-credentials.json",

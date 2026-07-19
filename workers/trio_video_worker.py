@@ -273,7 +273,11 @@ async def execute_pipeline_with_trio(
         # Stitch segments together
         final_video_path = os.path.join(job_output_dir, "final_video.mp4")
         stitched_path = await stitch_video_segments_trio(
-            video_paths, final_video_path, cancellation_token, nursery
+            video_paths,
+            final_video_path,
+            cancellation_token,
+            nursery,
+            final_config,
         )
         
         if not stitched_path or not os.path.exists(stitched_path):
@@ -336,15 +340,9 @@ async def enhance_prompt_trio(
         Enhancement result with keyframe and video prompts
     """
     def enhance_sync():
-        from pipeline import PromptEnhancer, PROMPT_ENHANCEMENT_INSTRUCTIONS
-        
-        enhancer = PromptEnhancer(
-            api_key=config.get('openai_api_key'),
-            base_url=config.get('openai_base_url', 'https://api.openai.com/v1'),
-            model=config.get('prompt_enhancement_model', 'gpt-4o-mini')
-        )
-        
-        return enhancer.enhance(PROMPT_ENHANCEMENT_INSTRUCTIONS, prompt)
+        from pipeline import enhance_prompt_data
+
+        return enhance_prompt_data(prompt, config)
     
     # Run enhancement in thread with cancellation check
     if await check_cancellation_async(cancellation_token, job_id=""):
@@ -485,7 +483,8 @@ async def stitch_video_segments_trio(
     video_paths: list,
     final_video_path: str,
     cancellation_token: TrioCancellationToken,
-    nursery: trio.Nursery
+    nursery: trio.Nursery,
+    config: Optional[Dict[str, Any]] = None,
 ) -> str:
     """
     Stitch video segments using Trio structured concurrency
@@ -504,8 +503,10 @@ async def stitch_video_segments_trio(
         raise InterruptedError("Job cancelled before video stitching")
     
     def stitch_sync():
-        from pipeline import stitch_video_segments
-        return stitch_video_segments(video_paths, final_video_path)
+        from pipeline import get_trim_duration_seconds, stitch_video_segments
+
+        trim_duration = get_trim_duration_seconds(config or {})
+        return stitch_video_segments(video_paths, final_video_path, trim_duration)
     
     # Run stitching in thread
     return await trio.to_thread.run_sync(stitch_sync)

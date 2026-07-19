@@ -1,6 +1,6 @@
 # TTV Pipeline Recovery and Product Roadmap
 
-Status: Phase 1 complete; Phase 2 pending
+Status: Phase 2 complete; Phase 3 pending
 Last updated: 2026-07-18
 Workspace: `/Users/magos/dev/kumanday/Parlina/ttv-pipeline`
 
@@ -207,7 +207,7 @@ Phase 1 validation:
 
 ## Phase 2 - Veo 3.1 and requested duration
 
-Status: pending
+Status: complete
 Priority: highest product priority
 
 Goal: deliver a correct direct-Vertex Veo 3.1 vertical slice with first/last
@@ -215,19 +215,19 @@ frames and requested final duration.
 
 Required work:
 
-- Default to `veo-3.1-generate-001`, while allowing the fast GA model through
+- [x] Default to `veo-3.1-generate-001`, while allowing the fast GA model through
   configuration.
-- Forward the configured Veo model through the factory.
-- Represent Veo clip durations as allowed values `[4, 6, 8]`, not a scalar max.
-- Send `duration_seconds` to the Google SDK.
-- Pass the existing ending keyframe via `GenerateVideosConfig.last_frame`.
-- Add optional CLI `--duration-seconds` and API `duration_seconds`.
-- Omitted duration preserves AI-inferred behavior.
-- Provided duration constrains decomposition and final runtime.
-- Plan provider-compatible segment durations; trim only when an exact sum is
+- [x] Forward the configured Veo model through the factory.
+- [x] Represent Veo clip durations as allowed values `[4, 6, 8]`, not a scalar max.
+- [x] Send `duration_seconds` to the Google SDK.
+- [x] Pass the existing ending keyframe via `GenerateVideosConfig.last_frame`.
+- [x] Add optional CLI `--duration-seconds` and API `duration_seconds`.
+- [x] Omitted duration preserves AI-inferred behavior.
+- [x] Provided duration constrains decomposition and final runtime.
+- [x] Plan provider-compatible segment durations; trim only when an exact sum is
   impossible, and surface the first/last-frame tradeoff for a trimmed final clip.
-- Validate LLM output against the requested segment plan.
-- Add mocked tests asserting model, duration, first frame, and last frame in the
+- [x] Validate LLM output against the requested segment plan.
+- [x] Add mocked tests asserting model, duration, first frame, and last frame in the
   actual Google request.
 
 Sizing:
@@ -235,6 +235,41 @@ Sizing:
 - Direct Veo 3.1 plus one-provider duration support is a bounded Codex task.
 - A generalized multi-provider duration planner should become a separate spec if
   more than the initial providers require materially different behavior.
+
+Phase 2 result:
+
+- Direct Vertex generation now defaults to `veo-3.1-generate-001`; setting
+  `google_veo.veo_model: veo-3.1-fast-generate-001` selects the fast GA model.
+- Veo capabilities and validation use the provider's discrete 4, 6, and 8 second
+  clip lengths. The Google SDK request receives the selected model, per-segment
+  `duration_seconds`, the first image, and `GenerateVideosConfig.last_frame`.
+- CLI `--duration-seconds` and API `duration_seconds` flow through the effective
+  job configuration. Without a request, the LLM still infers runtime and segment
+  count while choosing provider-compatible clip lengths.
+- Requested runtimes are decomposed into the fewest Veo-compatible clips. Odd or
+  sub-four-second requests use the smallest covering plan and trim only the final
+  output. The API response and worker/CLI logs warn that trimming removes the
+  final generated ending keyframe.
+- Both prompt-enhancement paths now share one instruction and validation flow.
+  LLM segment numbers, counts, total runtime, and per-segment durations must match
+  the requested plan before keyframe or video generation starts.
+- Exact-sum concatenation remains stream-copy. Only the impossible-sum trim path
+  re-encodes, because stream-copy trimming was measurably inexact at packet
+  boundaries.
+
+Phase 2 validation:
+
+- Focused Python 3.14 suite: 122 passed.
+- Mocked `google-genai` request asserts the default model, duration, first-frame
+  GCS image, and last-frame GCS image; a factory test covers the fast model.
+- Mocked API-to-worker smoke test proves requested duration survives redacted job
+  storage and secret restoration, and the API surfaces the trim warning.
+- Real ffmpeg check concatenated 4- and 6-second clips, trimmed the covering plan,
+  and produced an ffprobe duration of exactly `9.000000` seconds.
+- Python compilation, YAML parsing, CLI help, and `git diff --check` pass.
+- A broader legacy `tests/test_main.py` probe still reproduces the Phase 1
+  baseline failures for obsolete routes/fixtures and live readiness dependencies;
+  no Phase 2 code path is implicated.
 
 ## Phase 3 - Correct fal.ai support
 

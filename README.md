@@ -132,7 +132,7 @@ All pipeline behavior is controlled through `pipeline_config.yaml`. Copy `pipeli
 
 4.  **Remote Backend Configuration**:
     *   `runway_ml`: Settings for Runway ML, including `api_key`, `model_version`, etc.
-    *   `google_veo`: Settings for Google Veo, including `project_id`, `credentials_path`, etc.
+    *   `google_veo`: Settings for Google Veo 3.1, including `project_id`, `credentials_path`, and optional `veo_model` (`veo-3.1-generate-001` by default or `veo-3.1-fast-generate-001`).
     *   `minimax`: Settings for Minimax API, including `api_key`, `model_version`, etc.
     *   `fal`: Settings for fal.ai, including `api_key`, `model`, optional `base_url`, and optional `default_input`.
 
@@ -153,6 +153,7 @@ All pipeline behavior is controlled through `pipeline_config.yaml`. Copy `pipeli
 
 9.  **Generation Parameters (Applies to all video backends)**:
     *   `segment_duration_seconds`: Desired duration for each video segment in seconds (e.g., 5.0). Crucial for chaining mode.
+    *   `duration_seconds`: Optional requested final runtime for Veo 3.1, up to 14,440 seconds. The pipeline plans 4, 6, or 8 second clips and trims only when no exact sum exists.
     *   `frame_num`, `sample_steps`, `guide_scale`, `base_seed`, etc.
 
 10.  **Output and Logging Configuration**.
@@ -221,7 +222,7 @@ Remote backends (Runway, Veo3, Minimax) manage their own scaling and do not use 
 ## Usage
 
 ```bash
-uv run python pipeline.py --config pipeline_config.yaml
+uv run python pipeline.py --config pipeline_config.yaml --duration-seconds 15
 ```
 
 ## How It Works

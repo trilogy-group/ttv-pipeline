@@ -23,7 +23,7 @@ async def create_job(request_obj: Request, request: JobCreateRequest) -> JobCrea
     """
     Create a new video generation job.
 
-    Accepts only a prompt parameter and returns immediately with a task ID.
+    Accepts a prompt and optional requested duration, then returns a task ID.
     The job is queued for processing and can be monitored via the status endpoint.
     """
     # Get job queue from app state
@@ -35,7 +35,11 @@ async def create_job(request_obj: Request, request: JobCreateRequest) -> JobCrea
     if not api_config or not isinstance(api_config.pipeline_config, dict):
         raise HTTPException(status_code=503, detail="Pipeline configuration not available")
 
-    effective_config = ConfigMerger().merge_for_job(api_config.pipeline_config, request.prompt)
+    effective_config = ConfigMerger().merge_for_job(
+        api_config.pipeline_config,
+        request.prompt,
+        request.duration_seconds,
+    )
     effective_config.update(
         {
             "gcs_bucket": api_config.gcs.bucket,
@@ -45,11 +49,28 @@ async def create_job(request_obj: Request, request: JobCreateRequest) -> JobCrea
         }
     )
 
-    job = job_queue.enqueue_job(request=request, effective_config=effective_config)
+    from pipeline import get_duration_tradeoff, get_requested_job_timeout
+
+    try:
+        tradeoff = get_duration_tradeoff(effective_config)
+        job_timeout = get_requested_job_timeout(effective_config)
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+    job = job_queue.enqueue_job(
+        request=request,
+        effective_config=effective_config,
+        job_timeout=job_timeout,
+    )
 
     logger.info(f"Created job {job.id} with prompt: {request.prompt[:50]}...")
 
-    return JobCreateResponse(id=job.id, status=job.status, created_at=job.created_at)
+    return JobCreateResponse(
+        id=job.id,
+        status=job.status,
+        created_at=job.created_at,
+        warnings=[tradeoff] if tradeoff else [],
+    )
 
 
 @router.get("", response_model=List[JobStatusResponse])

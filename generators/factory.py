@@ -121,6 +121,8 @@ def create_video_generator(backend: str, config: Dict[str, Any]) -> VideoGenerat
                 "credentials_path": veo_config.get("credentials_path", "credentials.json"),
                 "region": veo_config.get("region", "global"),
                 "output_bucket": veo_config.get("output_bucket"),
+                "veo_model": veo_config.get("veo_model", Veo3Generator.MODEL_NAME),
+                "video_aspect_ratio": config.get("video_aspect_ratio", "16:9"),
                 "max_retries": remote_settings.get("max_retries", 3),
                 "polling_interval": remote_settings.get("polling_interval", 15),
                 "timeout": remote_settings.get("timeout", 600),

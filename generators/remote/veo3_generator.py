@@ -7,11 +7,8 @@ using the Google Gen AI SDK and Vertex AI.
 
 import os
 import time
-import json
-import logging
 import mimetypes
-from typing import Dict, Any, List, Optional
-from pathlib import Path
+from typing import Dict, Any, List
 
 # Google Cloud imports
 try:
@@ -34,21 +31,15 @@ except ImportError:
 
 from google.cloud import storage
 from google.oauth2 import service_account
-from PIL import Image
-
 from video_generator_interface import (
     VideoGeneratorInterface,
     VideoGenerationError,
-    APIError,
-    GenerationTimeoutError,
     InvalidInputError,
-    QuotaExceededError
 )
 from generators.base import (
     ImageValidator,
     RetryHandler,
     ProgressMonitor,
-    download_file,
     format_duration
 )
 
@@ -56,11 +47,12 @@ class Veo3Generator(VideoGeneratorInterface):
     """Remote video generator using Google Veo 3 API"""
     
     # Model name for Veo 3
-    MODEL_NAME = "veo-3.0-generate-preview"
+    MODEL_NAME = "veo-3.1-generate-001"
+    SUPPORTED_DURATIONS = [4, 6, 8]
     
     # Pricing estimates (placeholder values - actual pricing TBD)
     PRICING = {
-        "veo-3.0-generate-preview": 0.75,  # $0.10 per second (placeholder)
+        "veo-3.1-generate-001": 0.75,
     }
     
     def __init__(self, config: Dict[str, Any]):
@@ -119,8 +111,8 @@ class Veo3Generator(VideoGeneratorInterface):
     def get_capabilities(self) -> Dict[str, Any]:
         """Return Google Veo 3 capabilities"""
         return {
-            "max_duration": 5.0,  # Veo 3 currently supports up to 5 seconds
-            "supported_resolutions": ["16:9", "9:16", "1:1"],  # Aspect ratios
+            "supported_durations": self.SUPPORTED_DURATIONS,
+            "supported_resolutions": ["16:9", "9:16"],  # Aspect ratios
             "supports_image_to_video": True,
             "supports_text_to_video": False,  # Currently only image-to-video
             "requires_gpu": False,  # API-based
@@ -183,11 +175,8 @@ class Veo3Generator(VideoGeneratorInterface):
                             f"Recommended: 16:9, 9:16, or 1:1")
         
         # Validate duration
-        capabilities = self.get_capabilities()
-        if duration > capabilities["max_duration"]:
-            errors.append(f"Duration {duration}s exceeds maximum {capabilities['max_duration']}s")
-        elif duration < 1:
-            errors.append("Duration must be at least 1 second")
+        if duration not in self.SUPPORTED_DURATIONS:
+            errors.append(f"Duration must be one of {self.SUPPORTED_DURATIONS} seconds")
         
         return errors
     
@@ -195,7 +184,7 @@ class Veo3Generator(VideoGeneratorInterface):
                       prompt: str,
                       input_image_path: str,
                       output_path: str,
-                      duration: float = 5.0,
+                      duration: float = 8.0,
                       **kwargs) -> str:
         """
         Generate video using Google Veo 3 API
@@ -216,6 +205,14 @@ class Veo3Generator(VideoGeneratorInterface):
         validation_errors = self.validate_inputs(prompt, input_image_path, duration)
         if validation_errors:
             raise InvalidInputError(f"Input validation failed: {'; '.join(validation_errors)}")
+
+        last_frame_path = kwargs.get("last_frame_path")
+        if last_frame_path:
+            last_frame_validation = ImageValidator.validate_image(last_frame_path, max_size_mb=10.0)
+            if not last_frame_validation["valid"]:
+                raise InvalidInputError(
+                    f"Last frame validation failed: {'; '.join(last_frame_validation['errors'])}"
+                )
         
         # Log cost estimate
         estimated_cost = self.estimate_cost(duration)
@@ -239,19 +236,15 @@ class Veo3Generator(VideoGeneratorInterface):
             # Ensure the output bucket exists
             self._ensure_bucket_exists(self.output_bucket)
             
-            # Get the MIME type of the image
-            mime_type, _ = mimetypes.guess_type(input_image_path)
-            if not mime_type:
-                mime_type = "image/jpeg"  # Default to JPEG if can't determine
-            
-            # Upload the image to GCS if needed, or use local file
-            if kwargs.get("use_local_file", False):
-                # For local testing with direct file access
-                image = GenAIImage.from_file(input_image_path, mime_type=mime_type)
-            else:
-                # Upload to GCS and use GCS URI
-                gcs_uri = self._upload_to_gcs(input_image_path)
-                image = GenAIImage(gcs_uri=gcs_uri, mime_type=mime_type)
+            def request_image(path):
+                mime_type, _ = mimetypes.guess_type(path)
+                mime_type = mime_type or "image/jpeg"
+                if kwargs.get("use_local_file", False):
+                    return GenAIImage.from_file(location=path, mime_type=mime_type)
+                return GenAIImage(gcs_uri=self._upload_to_gcs(path), mime_type=mime_type)
+
+            image = request_image(input_image_path)
+            last_frame = request_image(last_frame_path) if last_frame_path else None
             
             # Submit the generation request
             self.logger.info(f"Submitting video generation request to {self.model_name}...")
@@ -259,7 +252,9 @@ class Veo3Generator(VideoGeneratorInterface):
             # Create the configuration
             config = GenerateVideosConfig(
                 aspect_ratio=video_aspect_ratio,
-                output_gcs_uri=output_gcs_uri
+                duration_seconds=int(duration),
+                last_frame=last_frame,
+                output_gcs_uri=output_gcs_uri,
             )
             
             # Use the asynchronous API call and wait for completion
