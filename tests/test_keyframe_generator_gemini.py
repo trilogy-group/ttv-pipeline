@@ -45,6 +45,7 @@ def test_gemini_keyframe_generation_uses_google_genai_client(tmp_path, monkeypat
     assert result == str(output_path.resolve())
     assert output_path.read_bytes() == generated_bytes
     assert generate_content_calls[0]["model"] == "test-image-model"
+    assert generate_content_calls[0]["config"].response_modalities == ["IMAGE"]
     assert generate_content_calls[0]["contents"][-1] == "Turn the square green"
     assert generate_content_calls[0]["contents"][0].inline_data.data == input_path.read_bytes()
     assert clients[0].closed

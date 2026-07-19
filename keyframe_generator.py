@@ -435,6 +435,7 @@ def generate_keyframe_with_gemini(
     try:
         client = genai.Client(api_key=gemini_api_key)
         generation_config = types.GenerateContentConfig(
+            response_modalities=["IMAGE"],
             temperature=0.9,
             top_p=0.95,
             top_k=40,
