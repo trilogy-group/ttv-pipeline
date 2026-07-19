@@ -16,6 +16,7 @@ from pipeline import (
     enhance_prompt_data,
     generate_video_segments_single_keyframe,
     get_duration_tradeoff,
+    get_requested_job_timeout,
     get_requested_segment_plan,
     get_trim_duration_seconds,
     main,
@@ -71,7 +72,12 @@ def test_requested_duration_plan_and_llm_validation():
     assert "duration_seconds values [4, 6]" in build_prompt_enhancement_instructions(config)
     assert "ending keyframe will not appear" in get_duration_tradeoff(config)
     assert get_trim_duration_seconds(config) == 9
-    assert get_trim_duration_seconds({"default_backend": "veo3", "duration_seconds": 10}) is None
+    assert get_trim_duration_seconds({
+        "default_backend": "veo3",
+        "generation_mode": "keyframe",
+        "single_keyframe_mode": True,
+        "duration_seconds": 10,
+    }) is None
 
     result["video_prompts"][1]["last_frame"] = None
     with pytest.raises(ValueError, match="first_frame and last_frame"):
@@ -187,7 +193,12 @@ def test_requested_duration_disables_incompatible_fallback(tmp_path):
          patch("generators.factory.get_fallback_generator") as get_fallback:
         with pytest.raises(VideoGenerationError, match="Veo failed"):
             generate_video_segments_single_keyframe(
-                {"default_backend": "veo3", "duration_seconds": 6},
+                {
+                    "default_backend": "veo3",
+                    "generation_mode": "keyframe",
+                    "single_keyframe_mode": True,
+                    "duration_seconds": 6,
+                },
                 [{
                     "segment": 1,
                     "prompt": "move",
@@ -319,7 +330,12 @@ def test_long_requested_duration_batches_prompt_enhancement():
         ]
         result = enhance_prompt_data(
             "A long journey",
-            {"default_backend": "veo3", "duration_seconds": 168},
+            {
+                "default_backend": "veo3",
+                "generation_mode": "keyframe",
+                "single_keyframe_mode": True,
+                "duration_seconds": 168,
+            },
         )
 
     assert prompt_enhancer.return_value.enhance.call_count == 2
@@ -332,18 +348,33 @@ def test_long_requested_duration_batches_prompt_enhancement():
 def test_chaining_mode_validates_its_actual_backend():
     config = {
         "generation_mode": "chaining",
-        "default_backend": "wan2.1",
-        "default_video_generation_backend": "veo3",
+        "default_backend": "veo3",
         "duration_seconds": 6,
     }
-    with pytest.raises(ValueError, match="supported only for the veo3 backend"):
+    with pytest.raises(ValueError, match="requires generation_mode=keyframe"):
         get_requested_segment_plan(config)
+
+
+def test_requested_duration_scales_queue_timeout():
+    config = {
+        "default_backend": "veo3",
+        "generation_mode": "keyframe",
+        "single_keyframe_mode": True,
+        "duration_seconds": MAX_REQUESTED_DURATION_SECONDS,
+        "remote_api_settings": {"timeout": 600},
+    }
+    assert get_requested_job_timeout(config) == 3600 + 1805 * 600
 
 
 def test_cli_rejects_unsupported_duration_before_generation():
     with patch(
         "pipeline.load_config",
-        return_value={"prompt": "move", "default_backend": "wan2.1"},
+        return_value={
+            "prompt": "move",
+            "default_backend": "wan2.1",
+            "generation_mode": "keyframe",
+            "single_keyframe_mode": True,
+        },
     ), patch("pipeline.enhance_prompt") as enhance_prompt:
         with pytest.raises(ValueError, match="supported only for the veo3 backend"):
             run_pipeline("config.yaml", duration_seconds=6)

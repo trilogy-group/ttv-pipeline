@@ -248,9 +248,28 @@ def get_requested_segment_plan(config: Dict) -> Optional[List[int]]:
         or int(requested) != requested
     ):
         raise ValueError("duration_seconds must be a positive integer")
+    if (
+        str(config.get("generation_mode", "keyframe")).lower() != "keyframe"
+        or not config.get("single_keyframe_mode", False)
+    ):
+        raise ValueError(
+            "duration_seconds requires generation_mode=keyframe and "
+            "single_keyframe_mode=true"
+        )
     if get_video_generation_backend(config) != "veo3":
         raise ValueError("duration_seconds is currently supported only for the veo3 backend")
     return plan_veo_segment_durations(int(requested))
+
+
+def get_requested_job_timeout(config: Dict) -> int:
+    """Allow enough queue time for every planned Veo request plus pipeline overhead."""
+    plan = get_requested_segment_plan(config)
+    if not plan:
+        return 3600
+    provider_timeout = max(
+        600, int(config.get("remote_api_settings", {}).get("timeout", 600))
+    )
+    return 3600 + len(plan) * provider_timeout
 
 
 def get_duration_tradeoff(config: Dict) -> Optional[str]:

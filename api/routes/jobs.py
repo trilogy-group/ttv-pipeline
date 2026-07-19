@@ -49,14 +49,19 @@ async def create_job(request_obj: Request, request: JobCreateRequest) -> JobCrea
         }
     )
 
-    from pipeline import get_duration_tradeoff
+    from pipeline import get_duration_tradeoff, get_requested_job_timeout
 
     try:
         tradeoff = get_duration_tradeoff(effective_config)
+        job_timeout = get_requested_job_timeout(effective_config)
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
 
-    job = job_queue.enqueue_job(request=request, effective_config=effective_config)
+    job = job_queue.enqueue_job(
+        request=request,
+        effective_config=effective_config,
+        job_timeout=job_timeout,
+    )
 
     logger.info(f"Created job {job.id} with prompt: {request.prompt[:50]}...")
 
