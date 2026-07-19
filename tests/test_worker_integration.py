@@ -122,6 +122,24 @@ class TestPipelineIntegration:
             fallback.generate_video.assert_called_once()
             assert result == [os.path.join(output_dir, "segment_001.mp4")]
 
+    def test_single_keyframe_generation_falls_back_when_backend_init_fails(self):
+        with tempfile.TemporaryDirectory() as output_dir:
+            frame_path = os.path.join(output_dir, "frame.png")
+            with open(frame_path, "wb") as file:
+                file.write(b"frame")
+
+            fallback = Mock()
+            config = {"default_backend": "primary", "segment_duration_seconds": 5}
+            prompts = [{"segment": 1, "prompt": "move", "first_frame": frame_path}]
+
+            with patch("generators.factory.create_video_generator", side_effect=VideoGenerationError("init failed")), \
+                 patch("generators.factory.get_fallback_generator", return_value=fallback):
+                result = generate_video_segments_single_keyframe(config, prompts, output_dir)
+
+            expected_path = os.path.join(output_dir, "segment_001.mp4")
+            assert fallback.generate_video.call_args.kwargs["output_path"] == expected_path
+            assert result == [expected_path]
+
     def test_cli_does_not_persist_effective_config(self, monkeypatch):
         with tempfile.TemporaryDirectory() as temp_dir:
             monkeypatch.chdir(temp_dir)

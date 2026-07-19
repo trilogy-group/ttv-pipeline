@@ -738,13 +738,11 @@ def generate_video_segments_single_keyframe(
             continue
 
         logging.info(f"Generating video for segment {seg} using keyframe: {keyframe_path}")
+        video_file = os.path.join(output_dir, f"segment_{seg:03d}.mp4")
 
         try:
             # Create video generator
             generator = factory.create_video_generator(backend, config)
-
-            # Generate video from single keyframe
-            video_file = os.path.join(output_dir, f"segment_{seg:03d}.mp4")
 
             # Call generator's generate_video method
             generator.generate_video(
