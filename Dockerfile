@@ -1,5 +1,5 @@
 # Base image with common dependencies
-FROM nvidia/cuda:12.1.1-devel-ubuntu22.04 AS ttv-base
+FROM nvidia/cuda:12.8.1-devel-ubuntu22.04 AS ttv-base
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PATH="/root/.local/bin:${PATH}"
@@ -7,7 +7,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
 # Install system dependencies
 RUN apt-get update && apt-get upgrade -y && \
     apt-get install -y htop tree nvtop git curl ca-certificates \
-    python3.10 python3.10-venv python3-pip ffmpeg libsm6 libxext6 && \
+    ffmpeg libsm6 libxext6 && \
     rm -rf /var/lib/apt/lists/*
 
 # Install Astral UV CLI via installer
@@ -25,10 +25,9 @@ WORKDIR /workspace/ttv-pipeline
 # Create frameworks directory for dependencies
 RUN mkdir -p frameworks
 
-# Set up Python environment with base requirements
-RUN uv venv --python 3.10 && \
-    uv pip install torch==2.0.1 torchvision==0.15.2 torchaudio==2.0.2 --index-url https://download.pytorch.org/whl/cu118 && \
-    uv pip install -r requirements.txt
+# Install the project from pyproject.toml with Python 3.14.
+RUN uv sync --python 3.14 --no-dev && \
+    uv pip install torch==2.10.0 torchvision==0.25.0 torchaudio==2.10.0 --index-url https://download.pytorch.org/whl/cu128
 
 # Install Gradio for web interface
 RUN uv pip install gradio

@@ -47,7 +47,6 @@ services:
       - ${CREDENTIALS_PATH:-./credentials}:/app/credentials:ro
       - ${PIPELINE_CONFIG_PATH:-./pipeline_config.yaml}:/app/pipeline_config.yaml:ro
       - ${API_CONFIG_PATH:-./api_config.yaml}:/app/api_config.yaml:ro
-      - ./ai-coe-454404-df4ebc146821.json:/app/ai-coe-454404-df4ebc146821.json:ro  # Mount GCS service account at same path as pipeline config expects
     ports:
       - "${API_HTTP_PORT:-8000}:8000/tcp"   # HTTP
       - "${API_QUIC_PORT:-8443}:8443/udp"   # QUIC
@@ -75,7 +74,7 @@ services:
       - REDIS_PORT=6379
       - REDIS_PASSWORD=${REDIS_PASSWORD:-}
       - GCS_BUCKET=${GCS_BUCKET:-ttv-api-artifacts}
-      - GCS_CREDENTIALS_PATH=/app/credentials/gcs-key.json
+      - GCS_CREDENTIALS_PATH=/app/credentials/credentials.json
       - ENVIRONMENT=${ENVIRONMENT:-production}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - WORKER_CONCURRENCY=${WORKER_CONCURRENCY:-1}
@@ -86,7 +85,6 @@ services:
       - ${CREDENTIALS_PATH:-./credentials}:/app/credentials:ro
       - ${PIPELINE_CONFIG_PATH:-./pipeline_config.yaml}:/app/pipeline_config.yaml:ro
       - ${API_CONFIG_PATH:-./api_config.yaml}:/app/api_config.yaml:ro
-      - ./ai-coe-454404-df4ebc146821.json:/app/ai-coe-454404-df4ebc146821.json:ro  # Mount GCS service account at same path as pipeline config expects
       - /tmp:/tmp  # For temporary video processing
     depends_on:
       redis:
@@ -97,7 +95,7 @@ services:
     deploy:
       replicas: ${WORKER_REPLICAS:-2}
     healthcheck:
-      test: ["CMD", "python", "-c", "import redis; r=redis.Redis(host='redis', port=6379); r.ping()"]
+      test: ["CMD", "python", "-c", "import os, redis; redis.Redis(host='redis', port=6379, password=os.getenv('REDIS_PASSWORD') or None).ping()"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -114,7 +112,7 @@ services:
       - REDIS_PORT=6379
       - REDIS_PASSWORD=${REDIS_PASSWORD:-}
       - GCS_BUCKET=${GCS_BUCKET:-ttv-api-artifacts}
-      - GCS_CREDENTIALS_PATH=/app/credentials/gcs-key.json
+      - GCS_CREDENTIALS_PATH=/app/credentials/credentials.json
       - ENVIRONMENT=${ENVIRONMENT:-production}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - NVIDIA_VISIBLE_DEVICES=all
@@ -149,9 +147,11 @@ services:
     networks:
       - api-network
     restart: unless-stopped
-    command: redis-server /usr/local/etc/redis/redis.conf
+    command: >-
+      sh -c 'exec redis-server /usr/local/etc/redis/redis.conf
+      $${REDIS_PASSWORD:+--requirepass "$$REDIS_PASSWORD"}'
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD-SHELL", "redis-cli --no-auth-warning $${REDIS_PASSWORD:+-a \"$$REDIS_PASSWORD\"} ping"]
       interval: 30s
       timeout: 10s
       retries: 3

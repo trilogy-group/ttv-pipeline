@@ -7,20 +7,27 @@ This document covers the initial setup, installation, and basic configuration re
 **Related Files:**
 - [`frame_extractor.py`](../frame_extractor.py) - Frame extraction utilities
 - [`pipeline_config.yaml.sample`](../pipeline_config.yaml.sample) - Configuration template
-- [`requirements.txt`](../requirements.txt) - Python dependencies
+- [`pyproject.toml`](../pyproject.toml) and [`uv.lock`](../uv.lock) - Python dependencies
 - [`setup.sh`](../setup.sh) - Automated setup script
 
 ## Prerequisites
 
 Before beginning setup, ensure you have:
-- Python 3.8 or higher
+- Python 3.14
+- [`uv`](https://docs.astral.sh/uv/)
 - CUDA-compatible GPU (for local generation)
 - Git
 - 50+ GB of disk space (for model downloads)
 
 ## Installation Process
 
-The TTV Pipeline provides an automated setup script that handles dependency installation and model downloads.
+Install the locked development environment first:
+
+```bash
+uv sync --extra dev
+```
+
+The setup script is only needed for optional local model frameworks and weights.
 
 ### Setup Flow
 
@@ -37,9 +44,9 @@ chmod +x setup.sh
 
 The script performs these operations:
 
-1. **Creates a Python virtual environment** in `.venv`
-2. **Installs flash-attn** with optimized compilation settings
-3. **Installs all dependencies** from `requirements.txt`
+1. **Synchronizes the Python 3.14 environment** from `pyproject.toml` and `uv.lock`
+2. **Installs local-backend dependencies** when a local backend is selected
+3. **Creates a Python virtual environment** in `.venv`
 4. **Downloads the Wan2.1 framework** to `./frameworks/Wan2.1`
 5. **Downloads FLF2V model weights** (14B parameters, 720P resolution)
 6. **Downloads I2V model weights** for chaining mode
@@ -115,12 +122,12 @@ The pipeline is configured through `pipeline_config.yaml`, which you must create
 
 ### Core Dependencies
 
-The pipeline requires several key Python packages installed via `requirements.txt`:
+Core and development dependencies are declared in `pyproject.toml` and locked in `uv.lock`:
 
-- **Video Generation**: PyTorch, transformers, accelerate
-- **API Integration**: OpenAI, Google Cloud, requests
-- **Media Processing**: FFmpeg-python, PIL, opencv-python
-- **Configuration**: PyYAML, instructor
+- **API service**: FastAPI, Hypercorn, Redis, and RQ
+- **Provider integration**: OpenAI, Google GenAI, Google Cloud, Runway, and requests
+- **Media processing**: FFmpeg-python and Pillow
+- **Configuration**: PyYAML, Pydantic, and instructor
 
 ### System Dependencies
 
@@ -134,11 +141,10 @@ The pipeline requires several key Python packages installed via `requirements.tx
 
 *Source: [`setup.sh`](../setup.sh)*
 
-Activate the virtual environment and run the pipeline:
+Run the pipeline inside the synchronized environment:
 
 ```bash
-source .venv/bin/activate
-python pipeline.py
+uv run python pipeline.py --config pipeline_config.yaml
 ```
 
 ### Command Execution

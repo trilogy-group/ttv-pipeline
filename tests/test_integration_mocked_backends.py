@@ -458,6 +458,7 @@ class TestGCSIntegrationWithMocks:
             # Write minimal MP4 header
             f.write(b'\x00\x00\x00\x20ftypmp42\x00\x00\x00\x00mp42isom')
             f.write(b'\x00' * 5000)  # 5KB test file
+            f.flush()
             yield f.name
         
         if os.path.exists(f.name):

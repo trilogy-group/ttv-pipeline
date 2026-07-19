@@ -185,7 +185,7 @@ class TestProcessVideoJob:
         mock_execute_pipeline.return_value = expected_gcs_uri
         
         # Process job
-        result = process_video_job(job_id)
+        result = process_video_job(job_id, use_trio=False)
         
         # Verify result
         assert result == expected_gcs_uri
@@ -217,7 +217,7 @@ class TestProcessVideoJob:
         mock_get_queue.return_value = mock_queue
         
         with pytest.raises(ValueError, match="Job nonexistent-job not found"):
-            process_video_job(job_id)
+            process_video_job(job_id, use_trio=False)
     
     @patch('workers.video_worker.get_job_queue')
     def test_process_video_job_early_cancellation(self, mock_get_queue):
@@ -241,7 +241,7 @@ class TestProcessVideoJob:
         set_job_cancellation_flag(job_id)
         
         with pytest.raises(InterruptedError, match="Job cancelled before processing started"):
-            process_video_job(job_id)
+            process_video_job(job_id, use_trio=False)
     
     @patch('workers.video_worker.execute_pipeline_with_config')
     @patch('workers.video_worker.get_job_queue')
@@ -266,7 +266,7 @@ class TestProcessVideoJob:
         mock_execute_pipeline.side_effect = InterruptedError("Job cancelled during pipeline execution")
         
         with pytest.raises(InterruptedError, match="Job cancelled during"):
-            process_video_job(job_id)
+            process_video_job(job_id, use_trio=False)
         
         # Verify job was marked as started before cancellation
         status_calls = [call for call in mock_queue.update_job_status.call_args_list 
@@ -294,7 +294,7 @@ class TestProcessVideoJob:
         mock_get_queue.return_value = mock_queue
         
         with pytest.raises(Exception, match="Redis error"):
-            process_video_job(job_id)
+            process_video_job(job_id, use_trio=False)
         
         # Verify error handling was attempted
         assert mock_queue.update_job_status.call_count >= 2

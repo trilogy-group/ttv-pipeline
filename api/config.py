@@ -8,6 +8,7 @@ the existing pipeline configuration system while adding API-specific settings.
 import os
 import yaml
 import logging
+from copy import deepcopy
 from typing import Dict, Any, Optional, List
 from pathlib import Path
 from pydantic import BaseModel, Field, field_validator
@@ -83,6 +84,66 @@ class APIConfig(BaseModel):
     
     # Pipeline configuration will be merged from existing config
     pipeline_config: Dict[str, Any] = Field(default_factory=dict)
+
+
+_SECRET_KEY_MARKERS = (
+    "api_key",
+    "access_key",
+    "private_key",
+    "password",
+    "secret",
+    "token",
+    "authorization",
+    "credential",
+)
+_REDACTED = "[REDACTED]"
+
+
+def _is_secret_key(key: Any) -> bool:
+    normalized = str(key).lower().replace("-", "_")
+    return any(marker in normalized for marker in _SECRET_KEY_MARKERS)
+
+
+def redact_config_secrets(value: Any) -> Any:
+    """Return a copy safe to persist outside the worker runtime."""
+    if isinstance(value, dict):
+        return {
+            key: _REDACTED if _is_secret_key(key) else redact_config_secrets(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [redact_config_secrets(item) for item in value]
+    return deepcopy(value)
+
+
+def _restore_config_secrets(stored: Any, runtime: Any) -> Any:
+    if isinstance(stored, dict) and isinstance(runtime, dict):
+        restored = {}
+        for key, value in stored.items():
+            if _is_secret_key(key):
+                if key in runtime:
+                    restored[key] = deepcopy(runtime[key])
+            elif key in runtime:
+                restored[key] = _restore_config_secrets(value, runtime[key])
+            else:
+                restored[key] = deepcopy(value)
+        return restored
+    if isinstance(stored, list) and isinstance(runtime, list):
+        return [
+            _restore_config_secrets(item, runtime[index])
+            if index < len(runtime)
+            else deepcopy(item)
+            for index, item in enumerate(stored)
+        ]
+    return deepcopy(stored)
+
+
+def restore_job_config_secrets(job_config: Dict[str, Any]) -> Dict[str, Any]:
+    """Restore locally mounted secrets without overriding stored job settings."""
+    runtime = get_config_from_env()
+    secret_source = deepcopy(runtime.pipeline_config)
+    secret_source["credentials_path"] = runtime.gcs.credentials_path
+    return _restore_config_secrets(job_config, secret_source)
 
 
 def load_pipeline_config(config_path: str = "pipeline_config.yaml") -> Dict[str, Any]:
@@ -238,7 +299,9 @@ def get_config_from_env() -> APIConfig:
         config.gcs.bucket = os.getenv('GCS_BUCKET')
     
     if os.getenv('GCS_CREDENTIALS_PATH'):
-        config.gcs.credentials_path = os.getenv('GCS_CREDENTIALS_PATH')
+        credentials_path = os.getenv('GCS_CREDENTIALS_PATH')
+        config.gcs.credentials_path = credentials_path
+        config.pipeline_config.setdefault('google_veo', {})['credentials_path'] = credentials_path
     
     if os.getenv('AUTH_TOKEN'):
         config.security.auth_token = os.getenv('AUTH_TOKEN')

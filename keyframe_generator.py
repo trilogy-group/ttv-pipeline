@@ -19,7 +19,8 @@ from typing import Optional, Dict, Any
 import time
 
 from PIL import Image
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 
 # Terminal colors for pretty output
 class Colors:
@@ -430,21 +431,15 @@ def generate_keyframe_with_gemini(
     Returns:
         Path to the generated image
     """
+    client = None
     try:
-        # Configure Gemini API
-        genai.configure(api_key=gemini_api_key)
-        
-        # Initialize the model
-        generation_config = {
-            "temperature": 0.9,
-            "top_p": 0.95,
-            "top_k": 40,
-            "max_output_tokens": 8192,
-        }
-        
-        model = genai.GenerativeModel(
-            model_name=model_name,
-            generation_config=generation_config
+        client = genai.Client(api_key=gemini_api_key)
+        generation_config = types.GenerateContentConfig(
+            response_modalities=["IMAGE"],
+            temperature=0.9,
+            top_p=0.95,
+            top_k=40,
+            max_output_tokens=8192,
         )
         
         # Build prompt with reference images if provided
@@ -465,7 +460,13 @@ def generate_keyframe_with_gemini(
                             img.verify()  # Verify it's a valid image
                             with open(image_path, "rb") as f:
                                 image_data = f.read()
-                            prompt_parts.append(genai.upload_file(image_path, mime_type=mimetypes.guess_type(image_path)[0]))
+                            prompt_parts.append(
+                                types.Part.from_bytes(
+                                    data=image_data,
+                                    mime_type=mimetypes.guess_type(image_path)[0]
+                                    or "application/octet-stream",
+                                )
+                            )
                             # Use filename without extension as reference name
                             ref_name = os.path.splitext(filename)[0]
                             prompt_parts.append(f"{ref_name} reference")
@@ -483,7 +484,13 @@ def generate_keyframe_with_gemini(
                 logging.info(f"Using input image for I2I: {input_image_path}")
                 with open(input_image_path, "rb") as f:
                     input_image_data = f.read()
-                prompt_parts.append(genai.upload_file(input_image_path, mime_type=mimetypes.guess_type(input_image_path)[0]))
+                prompt_parts.append(
+                    types.Part.from_bytes(
+                        data=input_image_data,
+                        mime_type=mimetypes.guess_type(input_image_path)[0]
+                        or "application/octet-stream",
+                    )
+                )
                 prompt_parts.append("Base image for editing")
             except Exception as verify_error:
                 logging.error(f"Input image is invalid: {verify_error}")
@@ -501,22 +508,26 @@ def generate_keyframe_with_gemini(
                     time.sleep(2 ** retry)
                 
                 # Generate content
-                response = model.generate_content(prompt_parts)
+                response = client.models.generate_content(
+                    model=model_name,
+                    contents=prompt_parts,
+                    config=generation_config,
+                )
                 
                 # Log detailed response information for debugging
-                logging.info(f"Gemini API response received. Candidates: {len(response.candidates) if response.candidates else 0}")
-                if response.candidates:
-                    logging.info(f"First candidate parts: {len(response.candidates[0].content.parts) if response.candidates[0].content and response.candidates[0].content.parts else 0}")
-                    for i, part in enumerate(response.candidates[0].content.parts):
+                response_parts = response.parts or []
+                logging.info(f"Gemini API response received. Parts: {len(response_parts)}")
+                if response_parts:
+                    for i, part in enumerate(response_parts):
                         logging.info(f"Part {i}: type={type(part)}, has_inline_data={hasattr(part, 'inline_data')}")
                         if hasattr(part, 'inline_data') and part.inline_data:
                             logging.info(f"Part {i}: inline_data length={len(part.inline_data.data) if part.inline_data.data else 0}")
                 
                 # Check if response contains an image
-                if response.candidates and response.candidates[0].content.parts:
+                if response_parts:
                     # Find the part with the largest inline_data (most likely to be the image)
                     image_parts = []
-                    for part in response.candidates[0].content.parts:
+                    for part in response_parts:
                         if hasattr(part, 'inline_data') and part.inline_data:
                             image_parts.append(part)
                     
@@ -555,6 +566,7 @@ def generate_keyframe_with_gemini(
                             img = Image.open(output_path)
                             img.verify()  # Verify it's a valid image
                             logging.info(f"Image saved and verified: {output_path}")
+                            client.close()
                             return os.path.abspath(output_path)
                         except Exception as verify_error:
                             logging.error(f"Generated image is invalid: {verify_error}")
@@ -581,6 +593,8 @@ def generate_keyframe_with_gemini(
                     raise
             
     except Exception as e:
+        if client is not None:
+            client.close()
         logging.error(f"Error using Gemini API: {e}")
         raise
 
@@ -698,8 +712,11 @@ def generate_keyframes_from_json(json_file, output_dir, model_name=None, imageRo
     
     # Force a clean start
     if os.path.exists(output_dir):
+        initial_image = os.path.abspath(initial_image_path) if initial_image_path else None
         for f in os.listdir(output_dir):
             if f.startswith("segment_") and f.endswith(".png"):
+                if os.path.abspath(os.path.join(output_dir, f)) == initial_image:
+                    continue
                 try:
                     os.remove(os.path.join(output_dir, f))
                 except:

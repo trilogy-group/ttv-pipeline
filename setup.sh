@@ -108,18 +108,15 @@ fi
 # Setup Python environment
 if [ "$SETUP_ENV" = true ]; then
   echo "Setting up Python environment..."
-  
-  # Create virtual environment if it doesn't exist
-  if [ ! -d ".venv" ]; then
-    python -m venv .venv
-    echo "Created Python virtual environment"
+
+  if ! command -v uv >/dev/null 2>&1; then
+    echo "uv is required. Install it from https://docs.astral.sh/uv/getting-started/installation/"
+    exit 1
   fi
-  
-  # Activate virtual environment
+
+  # .python-version pins Python 3.14; pyproject.toml and uv.lock are authoritative.
+  uv sync --extra dev
   source .venv/bin/activate
-  
-  # Install uv for faster package installation
-  pip install uv
 
   # Clone and install generator dependencies first
   if [ "$SETUP_WAN21" = true ]; then
@@ -146,11 +143,11 @@ if [ "$SETUP_ENV" = true ]; then
     fi
   fi
 
-  # Install pipeline dependencies after generator deps
-  echo "Installing pipeline dependencies..."
-  MAX_JOBS=64 uv pip install flash-attn --no-build-isolation
-  uv pip install -r requirements.txt --no-build-isolation
-  uv pip install "huggingface_hub[cli]"
+  # Local model backends have their own upstream dependencies.
+  if [ "$SETUP_WAN21" = true ] || [ "$SETUP_HUNYUAN" = true ]; then
+    MAX_JOBS=64 uv pip install flash-attn --no-build-isolation
+    uv pip install "huggingface_hub[cli]"
+  fi
   
   echo "Python environment setup complete"
 fi

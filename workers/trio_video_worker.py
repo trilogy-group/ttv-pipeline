@@ -9,20 +9,17 @@ resource management and cooperative cancellation.
 import logging
 import os
 import tempfile
-import yaml
 from typing import Dict, Any, Optional
 
 import trio
 
 from api.queue import get_job_queue
 from api.models import JobStatus
-from api.config_merger import ConfigMerger
+from api.config import restore_job_config_secrets
 from .trio_executor import (
-    TrioCancellationToken, 
-    ProcessManager, 
+    TrioCancellationToken,
     check_cancellation_async,
     cleanup_temp_files_async,
-    AsyncioTrioBridge
 )
 
 logger = logging.getLogger(__name__)
@@ -61,98 +58,88 @@ def _record_job_metrics_trio(processing_time: float, success: bool = True):
 async def process_video_job_trio(job_id: str) -> str:
     """
     Trio-based video generation job processor with structured concurrency.
-    
+
     This function uses Trio's structured concurrency features to manage
     the video generation pipeline with proper cancellation and resource cleanup.
-    
+
     Args:
         job_id: The unique job identifier
-        
+
     Returns:
         The GCS URI of the generated video
-        
+
     Raises:
         trio.Cancelled: If job is cancelled
         Exception: If job processing fails
     """
+
     logger.info(f"Starting Trio-based video generation job {job_id}")
-    
-    # Use structured concurrency with nursery
-    async with trio.open_nursery() as nursery:
-        # Create cancellation scope for this job
-        with trio.CancelScope() as cancel_scope:
-            # Create cancellation token
-            cancellation_token = TrioCancellationToken(job_id, cancel_scope)
-            
+
+    # The pipeline phases are sequential; a cancellation scope is sufficient.
+    with trio.CancelScope() as cancel_scope:
+        # Create cancellation token
+        cancellation_token = TrioCancellationToken(job_id, cancel_scope)
+
+        try:
+            # Get job queue instance
+            job_queue = get_job_queue()
+
+            # Get job data
+            job_data = job_queue.get_job(job_id)
+            if not job_data:
+                raise ValueError(f"Job {job_id} not found")
+
+            # Check for early cancellation
+            if await check_cancellation_async(cancellation_token, job_id):
+                raise InterruptedError(f"Job {job_id} cancelled")
+
+            # Update status to started
+            job_queue.update_job_status(job_id, JobStatus.STARTED)
+            job_queue.add_job_log(job_id, "Video generation started with Trio")
+
+            # Extract configuration and prompt
+            prompt = job_data.prompt
+            effective_config = restore_job_config_secrets(job_data.config)
+
+            logger.info(f"Processing job {job_id} with prompt: {prompt[:100]}...")
+            logger.info(f"Using effective configuration with {len(effective_config)} parameters")
+
+            # Execute the pipeline with structured concurrency
+            gcs_uri = await execute_pipeline_with_trio(
+                job_id=job_id,
+                prompt=prompt,
+                config=effective_config,
+                cancellation_token=cancellation_token,
+                job_queue=job_queue,
+                nursery=None,
+            )
+
+            # Mark as completed
+            job_queue.update_job_status(job_id, JobStatus.FINISHED, progress=100, gcs_uri=gcs_uri)
+            job_queue.add_job_log(job_id, f"Video generation completed: {gcs_uri}")
+
+            logger.info(f"Job {job_id} completed successfully: {gcs_uri}")
+            return gcs_uri
+
+        except (trio.Cancelled, InterruptedError):
+            logger.info(f"Job {job_id} was cancelled")
+            # Job status already updated in check_cancellation_async
+            raise
+
+        except Exception as e:
+            logger.error(f"Job {job_id} failed: {e}")
+
+            # Update job status to failed (unless it was already cancelled)
             try:
-                # Get job queue instance
                 job_queue = get_job_queue()
-                
-                # Get job data
-                job_data = job_queue.get_job(job_id)
-                if not job_data:
-                    raise ValueError(f"Job {job_id} not found")
-                
-                # Check for early cancellation
-                if await check_cancellation_async(cancellation_token, job_id):
-                    raise trio.Cancelled()
-                
-                # Update status to started
-                job_queue.update_job_status(job_id, JobStatus.STARTED)
-                job_queue.add_job_log(job_id, "Video generation started with Trio")
-                
-                # Extract configuration and prompt
-                prompt = job_data.prompt
-                effective_config = job_data.config
-                
-                logger.info(f"Processing job {job_id} with prompt: {prompt[:100]}...")
-                logger.info(f"Using effective configuration with {len(effective_config)} parameters")
-                
-                # Execute the pipeline with structured concurrency
-                gcs_uri = await execute_pipeline_with_trio(
-                    job_id=job_id,
-                    prompt=prompt,
-                    config=effective_config,
-                    cancellation_token=cancellation_token,
-                    job_queue=job_queue,
-                    nursery=nursery
-                )
-                
-                # Mark as completed
-                job_queue.update_job_status(
-                    job_id, 
-                    JobStatus.FINISHED, 
-                    progress=100, 
-                    gcs_uri=gcs_uri
-                )
-                job_queue.add_job_log(job_id, f"Video generation completed: {gcs_uri}")
-                
-                logger.info(f"Job {job_id} completed successfully: {gcs_uri}")
-                return gcs_uri
-                
-            except trio.Cancelled:
-                logger.info(f"Job {job_id} was cancelled")
-                # Job status already updated in check_cancellation_async
-                raise
-                
-            except Exception as e:
-                logger.error(f"Job {job_id} failed: {e}")
-                
-                # Update job status to failed (unless it was already cancelled)
-                try:
-                    job_queue = get_job_queue()
-                    current_job = job_queue.get_job(job_id)
-                    if current_job and current_job.status != JobStatus.CANCELED:
-                        job_queue.update_job_status(
-                            job_id, 
-                            JobStatus.FAILED, 
-                            error=str(e)
-                        )
-                        job_queue.add_job_log(job_id, f"Job failed: {e}")
-                except Exception as update_error:
-                    logger.error(f"Failed to update job status for {job_id}: {update_error}")
-                
-                raise
+                current_job = job_queue.get_job(job_id)
+                if current_job and current_job.status != JobStatus.CANCELED:
+                    job_queue.update_job_status(job_id, JobStatus.FAILED, error=str(e))
+                    job_queue.add_job_log(job_id, f"Job failed: {e}")
+            except Exception as update_error:
+                logger.error(f"Failed to update job status for {job_id}: {update_error}")
+
+            raise
 
 
 async def execute_pipeline_with_trio(
@@ -161,7 +148,7 @@ async def execute_pipeline_with_trio(
     config: Dict[str, Any],
     cancellation_token: TrioCancellationToken,
     job_queue,
-    nursery: trio.Nursery
+    nursery: Optional[trio.Nursery]
 ) -> str:
     """
     Execute the video generation pipeline using Trio structured concurrency.
@@ -189,11 +176,6 @@ async def execute_pipeline_with_trio(
     # Create temporary working directory for this job
     temp_dir = tempfile.mkdtemp(prefix=f"job_{job_id}_")
     
-    # Add cleanup callback for temp directory
-    cancellation_token.add_cleanup_callback(
-        lambda: trio.from_thread.run_sync(cleanup_temp_files_async, temp_dir)
-    )
-    
     try:
         logger.info(f"Using temporary directory: {temp_dir}")
         
@@ -203,46 +185,25 @@ async def execute_pipeline_with_trio(
         
         # Phase 1: Setup and validation (5%)
         if await check_cancellation_async(cancellation_token, job_id):
-            raise trio.Cancelled()
+            raise InterruptedError(f"Job {job_id} cancelled")
         
         job_queue.update_job_status(job_id, JobStatus.PROGRESS, progress=5)
         job_queue.add_job_log(job_id, "Setting up pipeline configuration")
         
-        # Write job-specific configuration to temporary file for logging
-        job_config_path = os.path.join(temp_dir, "job_config.yaml")
-        await trio.to_thread.run_sync(write_config_file, job_config_path, config)
-        
-        logger.info(f"Job configuration written to {job_config_path}")
-        
         # Phase 2: Import and initialize pipeline (10%)
         if await check_cancellation_async(cancellation_token, job_id):
-            raise trio.Cancelled()
+            raise InterruptedError(f"Job {job_id} cancelled")
         
         job_queue.update_job_status(job_id, JobStatus.PROGRESS, progress=10)
         job_queue.add_job_log(job_id, "Initializing video generation pipeline")
         
-        # Import pipeline functions (run in thread to avoid blocking)
-        pipeline_modules = await trio.to_thread.run_sync(import_pipeline_modules)
-        
-        # Load base configuration from mounted pipeline_config.yaml
-        base_config_path = "/app/pipeline_config.yaml"
-        if not os.path.exists(base_config_path):
-            logger.error(f"Base pipeline config not found at {base_config_path}")
-            raise FileNotFoundError(f"Pipeline configuration not found at {base_config_path}")
-        
-        base_config = await trio.to_thread.run_sync(
-            pipeline_modules['load_config'], base_config_path
-        )
-        
-        # Use ConfigMerger to ensure proper precedence
-        config_merger = ConfigMerger()
-        final_config = config_merger.merge_for_job(base_config, prompt)
+        final_config = config
         
         logger.info(f"Final configuration merged with prompt override")
         
         # Phase 3: Prompt enhancement and segmentation (20%)
         if await check_cancellation_async(cancellation_token, job_id):
-            raise trio.Cancelled()
+            raise InterruptedError(f"Job {job_id} cancelled")
         
         job_queue.update_job_status(job_id, JobStatus.PROGRESS, progress=20)
         job_queue.add_job_log(job_id, "Enhancing and segmenting prompt")
@@ -252,14 +213,14 @@ async def execute_pipeline_with_trio(
             prompt, final_config, cancellation_token, nursery
         )
         
-        keyframe_prompts = [item['prompt'] for item in enhancement_result['keyframe_prompts']]
+        keyframe_prompts = enhancement_result['keyframe_prompts']
         video_prompts = enhancement_result['video_prompts']
         
         logger.info(f"Generated {len(keyframe_prompts)} keyframe prompts and {len(video_prompts)} video prompts")
         
         # Phase 4: Keyframe generation (50%)
         if await check_cancellation_async(cancellation_token, job_id):
-            raise trio.Cancelled()
+            raise InterruptedError(f"Job {job_id} cancelled")
         
         job_queue.update_job_status(job_id, JobStatus.PROGRESS, progress=30)
         job_queue.add_job_log(job_id, f"Generating {len(keyframe_prompts)} keyframes")
@@ -267,6 +228,7 @@ async def execute_pipeline_with_trio(
         # Generate keyframes with structured concurrency
         keyframe_paths = await generate_keyframes_trio(
             keyframe_prompts=keyframe_prompts,
+            video_prompts=video_prompts,
             config=final_config,
             output_dir=job_output_dir,
             cancellation_token=cancellation_token,
@@ -281,7 +243,7 @@ async def execute_pipeline_with_trio(
         
         # Phase 5: Video segment generation (80%)
         if await check_cancellation_async(cancellation_token, job_id):
-            raise trio.Cancelled()
+            raise InterruptedError(f"Job {job_id} cancelled")
         
         job_queue.update_job_status(job_id, JobStatus.PROGRESS, progress=50)
         job_queue.add_job_log(job_id, f"Generating {len(video_prompts)} video segments")
@@ -303,7 +265,7 @@ async def execute_pipeline_with_trio(
         
         # Phase 6: Video stitching (90%)
         if await check_cancellation_async(cancellation_token, job_id):
-            raise trio.Cancelled()
+            raise InterruptedError(f"Job {job_id} cancelled")
         
         job_queue.update_job_status(job_id, JobStatus.PROGRESS, progress=80)
         job_queue.add_job_log(job_id, "Stitching video segments together")
@@ -321,7 +283,7 @@ async def execute_pipeline_with_trio(
         
         # Phase 7: Upload to GCS (95%)
         if await check_cancellation_async(cancellation_token, job_id):
-            raise trio.Cancelled()
+            raise InterruptedError(f"Job {job_id} cancelled")
         
         job_queue.update_job_status(job_id, JobStatus.PROGRESS, progress=90)
         job_queue.add_job_log(job_id, "Uploading final video to Google Cloud Storage")
@@ -342,41 +304,17 @@ async def execute_pipeline_with_trio(
         
         return gcs_uri
         
-    except trio.Cancelled:
+    except (trio.Cancelled, InterruptedError):
         # Cancellation - clean up and re-raise
         logger.info(f"Pipeline execution cancelled for job {job_id}")
-        await cleanup_temp_files_async(temp_dir)
         raise
         
     except Exception as e:
         # Other errors - clean up and re-raise
         logger.error(f"Pipeline execution failed for job {job_id}: {e}")
-        await cleanup_temp_files_async(temp_dir)
         raise
-
-
-def write_config_file(config_path: str, config: Dict[str, Any]):
-    """Write configuration to YAML file (sync function for thread execution)"""
-    with open(config_path, 'w') as f:
-        yaml.dump(config, f, default_flow_style=False)
-
-
-def import_pipeline_modules():
-    """Import pipeline modules (sync function for thread execution)"""
-    from pipeline import (
-        load_config, PromptEnhancer, generate_keyframes, 
-        generate_video_segments, stitch_video_segments,
-        PROMPT_ENHANCEMENT_INSTRUCTIONS
-    )
-    
-    return {
-        'load_config': load_config,
-        'PromptEnhancer': PromptEnhancer,
-        'generate_keyframes': generate_keyframes,
-        'generate_video_segments': generate_video_segments,
-        'stitch_video_segments': stitch_video_segments,
-        'PROMPT_ENHANCEMENT_INSTRUCTIONS': PROMPT_ENHANCEMENT_INSTRUCTIONS
-    }
+    finally:
+        await cleanup_temp_files_async(temp_dir)
 
 
 async def enhance_prompt_trio(
@@ -410,13 +348,14 @@ async def enhance_prompt_trio(
     
     # Run enhancement in thread with cancellation check
     if await check_cancellation_async(cancellation_token, job_id=""):
-        raise trio.Cancelled()
+        raise InterruptedError("Job cancelled before prompt enhancement")
     
     return await trio.to_thread.run_sync(enhance_sync)
 
 
 async def generate_keyframes_trio(
     keyframe_prompts: list,
+    video_prompts: list,
     config: Dict[str, Any],
     output_dir: str,
     cancellation_token: TrioCancellationToken,
@@ -445,24 +384,16 @@ async def generate_keyframes_trio(
     """
     # Check for cancellation before starting
     if await check_cancellation_async(cancellation_token, job_id):
-        raise trio.Cancelled()
+        raise InterruptedError(f"Job {job_id} cancelled before keyframe generation")
     
     def generate_sync():
-        from pipeline import generate_keyframes
+        from pipeline import prepare_keyframes
         
-        return generate_keyframes(
-            keyframe_prompts=keyframe_prompts,
+        return prepare_keyframes(
             config=config,
+            keyframe_prompts=keyframe_prompts,
+            video_prompts=video_prompts,
             output_dir=output_dir,
-            model_name=config.get('image_generation_model'),
-            imageRouter_api_key=config.get('image_router_api_key'),
-            stability_api_key=config.get('stability_api_key'),
-            openai_api_key=config.get('openai_api_key'),
-            gemini_api_key=config.get('gemini_api_key'),
-            initial_image_path=config.get('initial_image'),
-            image_size=config.get('image_size'),
-            reference_images_dir=config.get('reference_images_dir'),
-            max_retries=3
         )
     
     try:
@@ -509,7 +440,7 @@ async def generate_video_segments_trio(
     """
     # Check for cancellation before starting
     if await check_cancellation_async(cancellation_token, job_id):
-        raise trio.Cancelled()
+        raise InterruptedError(f"Job {job_id} cancelled before video generation")
     
     def generate_sync():
         from pipeline import generate_video_segments, generate_video_segments_single_keyframe
@@ -570,7 +501,7 @@ async def stitch_video_segments_trio(
     """
     # Check for cancellation before starting
     if cancellation_token.is_cancelled():
-        raise trio.Cancelled()
+        raise InterruptedError("Job cancelled before video stitching")
     
     def stitch_sync():
         from pipeline import stitch_video_segments
@@ -602,7 +533,7 @@ async def upload_video_to_gcs_trio(
     """
     # Check for cancellation before upload
     if cancellation_token.is_cancelled():
-        raise trio.Cancelled()
+        raise InterruptedError(f"Job {job_id} cancelled before upload")
     
     def upload_sync():
         from api.config import GCSConfig

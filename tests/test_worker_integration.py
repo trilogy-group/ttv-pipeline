@@ -19,6 +19,8 @@ from workers.video_worker import (
 )
 from api.models import JobStatus, JobData
 from api.config_merger import ConfigMerger
+from pipeline import prepare_keyframes, generate_video_segments_single_keyframe, run_pipeline
+from video_generator_interface import VideoGenerationError
 
 
 class TestPipelineIntegration:
@@ -44,12 +46,127 @@ class TestPipelineIntegration:
         assert effective_config['size'] == '1280*720'  # Other config preserved
         assert effective_config['frame_num'] == 81
         assert effective_config['openai_api_key'] == 'test-key'
+
+    def test_prepare_keyframes_preserves_start_and_resolves_paths(self):
+        with tempfile.TemporaryDirectory() as output_dir:
+            initial_image = os.path.join(output_dir, "start.png")
+            with open(initial_image, "wb") as file:
+                file.write(b"start")
+
+            frames_dir = os.path.join(output_dir, "frames")
+            os.makedirs(frames_dir)
+            frame_paths = [
+                os.path.join(frames_dir, "segment_01.png"),
+                os.path.join(frames_dir, "segment_02.png"),
+            ]
+            for frame_path in frame_paths:
+                with open(frame_path, "wb") as file:
+                    file.write(b"frame")
+
+            video_prompts = [
+                {"segment": 1, "prompt": "one", "first_frame": "provided_start_image.png", "last_frame": "segment_01.png"},
+                {"segment": 2, "prompt": "two", "first_frame": "segment_01.png", "last_frame": "segment_02.png"},
+            ]
+            config = {"image_generation_model": "test", "initial_image": initial_image}
+
+            with patch("pipeline.generate_keyframes", return_value=frame_paths):
+                assert prepare_keyframes(config, ["one", "two"], video_prompts, output_dir) == frame_paths
+
+            with open(os.path.join(frames_dir, "segment_00.png"), "rb") as file:
+                assert file.read() == b"start"
+            assert video_prompts[0]["first_frame"] == os.path.join(frames_dir, "segment_00.png")
+            assert video_prompts[1]["last_frame"] == os.path.join(frames_dir, "segment_02.png")
+
+    def test_prepare_keyframes_keeps_start_already_named_segment_zero(self):
+        with tempfile.TemporaryDirectory() as output_dir:
+            frames_dir = os.path.join(output_dir, "frames")
+            os.makedirs(frames_dir)
+            initial_image = os.path.join(frames_dir, "segment_00.png")
+            with open(initial_image, "wb") as file:
+                file.write(b"start")
+
+            def generate_frame(**kwargs):
+                with open(kwargs["input_image_path"], "rb") as file:
+                    assert file.read() == b"start"
+                with open(kwargs["output_path"], "wb") as file:
+                    file.write(b"frame")
+                return kwargs["output_path"]
+
+            video_prompts = [{"segment": 1, "prompt": "one", "first_frame": "provided_start_image.png"}]
+            config = {"image_generation_model": "test", "initial_image": initial_image}
+
+            with patch("keyframe_generator.generate_keyframe", side_effect=generate_frame):
+                prepare_keyframes(config, ["one"], video_prompts, output_dir)
+
+            with open(initial_image, "rb") as file:
+                assert file.read() == b"start"
+            assert video_prompts[0]["first_frame"] == initial_image
+
+    def test_single_keyframe_generation_uses_typed_error_fallback(self):
+        with tempfile.TemporaryDirectory() as output_dir:
+            frame_path = os.path.join(output_dir, "frame.png")
+            with open(frame_path, "wb") as file:
+                file.write(b"frame")
+
+            primary = Mock()
+            primary.generate_video.side_effect = VideoGenerationError("primary failed")
+            fallback = Mock()
+            config = {"default_backend": "primary", "segment_duration_seconds": 5}
+            prompts = [{"segment": 1, "prompt": "move", "first_frame": frame_path}]
+
+            with patch("generators.factory.create_video_generator", return_value=primary), \
+                 patch("generators.factory.get_fallback_generator", return_value=fallback) as get_fallback:
+                result = generate_video_segments_single_keyframe(config, prompts, output_dir)
+
+            get_fallback.assert_called_once_with("primary", config)
+            fallback.generate_video.assert_called_once()
+            assert result == [os.path.join(output_dir, "segment_001.mp4")]
+
+    def test_single_keyframe_generation_falls_back_when_backend_init_fails(self):
+        with tempfile.TemporaryDirectory() as output_dir:
+            frame_path = os.path.join(output_dir, "frame.png")
+            with open(frame_path, "wb") as file:
+                file.write(b"frame")
+
+            fallback = Mock()
+            config = {"default_backend": "primary", "segment_duration_seconds": 5}
+            prompts = [{"segment": 1, "prompt": "move", "first_frame": frame_path}]
+
+            with patch("generators.factory.create_video_generator", side_effect=VideoGenerationError("init failed")), \
+                 patch("generators.factory.get_fallback_generator", return_value=fallback):
+                result = generate_video_segments_single_keyframe(config, prompts, output_dir)
+
+            expected_path = os.path.join(output_dir, "segment_001.mp4")
+            assert fallback.generate_video.call_args.kwargs["output_path"] == expected_path
+            assert result == [expected_path]
+
+    def test_cli_does_not_persist_effective_config(self, monkeypatch):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            monkeypatch.chdir(temp_dir)
+            config_path = os.path.join(temp_dir, "pipeline_config.yaml")
+            with open(config_path, "w") as file:
+                yaml.safe_dump({
+                    "prompt": "test",
+                    "generation_mode": "keyframe",
+                    "openai_api_key": "test-secret",
+                }, file)
+
+            enhanced = {
+                "keyframe_prompts": [{"segment": 1, "prompt": "frame"}],
+                "video_prompts": [{"segment": 1, "prompt": "move"}],
+            }
+            with patch("pipeline.enhance_prompt", return_value=enhanced), \
+                 patch("pipeline.prepare_keyframes"), \
+                 patch("pipeline.generate_video_segments", return_value=["segment.mp4"]):
+                run_pipeline(config_path)
+
+            assert not os.path.exists(os.path.join(temp_dir, "output", "config.yaml"))
     
-    @patch('pipeline.generate_keyframes')
-    def test_generate_keyframes_with_progress(self, mock_generate_keyframes):
+    @patch('pipeline.prepare_keyframes')
+    def test_generate_keyframes_with_progress(self, mock_prepare_keyframes):
         """Test keyframe generation with progress reporting"""
         # Mock keyframe generation
-        mock_generate_keyframes.return_value = ['frame1.png', 'frame2.png']
+        mock_prepare_keyframes.return_value = ['frame1.png', 'frame2.png']
         
         # Mock job queue
         mock_job_queue = Mock()
@@ -63,9 +180,11 @@ class TestPipelineIntegration:
         }
         
         keyframe_prompts = ['prompt1', 'prompt2']
+        video_prompts = [{'segment': 1, 'prompt': 'video1'}]
         
         result = generate_keyframes_with_progress(
             keyframe_prompts=keyframe_prompts,
+            video_prompts=video_prompts,
             config=config,
             output_dir='/tmp/test',
             cancellation_token=cancellation_token,
@@ -84,9 +203,10 @@ class TestPipelineIntegration:
         )
         
         # Verify keyframe generation was called with correct parameters
-        mock_generate_keyframes.assert_called_once()
-        call_kwargs = mock_generate_keyframes.call_args[1]
+        mock_prepare_keyframes.assert_called_once()
+        call_kwargs = mock_prepare_keyframes.call_args[1]
         assert call_kwargs['keyframe_prompts'] == keyframe_prompts
+        assert call_kwargs['video_prompts'] == video_prompts
         assert call_kwargs['config'] == config
         assert call_kwargs['output_dir'] == '/tmp/test'
     
@@ -212,6 +332,7 @@ class TestPipelineIntegration:
                 job_queue=mock_job_queue,
                 processes=[]
             )
+        cancellation_token.cleanup()
 
 
 class TestStructuredLogging:
@@ -241,7 +362,7 @@ class TestStructuredLogging:
         assert mock_logger.info.call_count > 0
         
         # Check that job ID is included in log messages
-        log_calls = [call.args[0] for call in mock_logger.info.call_calls]
+        log_calls = [call.args[0] for call in mock_logger.info.call_args_list]
         job_id_logs = [log for log in log_calls if 'test-job' in log]
         assert len(job_id_logs) > 0
     

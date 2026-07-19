@@ -63,12 +63,12 @@ curl http://localhost/healthz
 
 **List Jobs:**
 ```bash
-curl http://localhost:8000/jobs
+curl http://localhost:8000/v1/jobs
 ```
 
 **Create a Job:**
 ```bash
-curl -X POST http://localhost:8000/jobs \
+curl -X POST http://localhost:8000/v1/jobs \
   -H "Content-Type: application/json" \
   -d '{
     "prompt": "A cat playing with a ball"
@@ -77,46 +77,17 @@ curl -X POST http://localhost:8000/jobs \
 
 **Get Job Status:**
 ```bash
-curl http://localhost:8000/jobs/{job_id}
-```
-
-**Cancel a Job:**
-```bash
-curl -X DELETE http://localhost:8000/jobs/{job_id}
+curl http://localhost:8000/v1/jobs/{job_id}
 ```
 
 **Get Video URL (for completed jobs):**
 ```bash
-curl http://localhost:8000/jobs/{job_id}/video-url
+curl http://localhost:8000/v1/jobs/{job_id}/video-url
 ```
 
 **Get Video URL with custom expiration:**
 ```bash
-curl "http://localhost:8000/jobs/{job_id}/video-url?expiration_seconds=7200"
-```
-
-### Generator Endpoints
-
-**List Available Generators:**
-```bash
-curl http://localhost:8000/generators
-```
-
-**Get Generator Details:**
-```bash
-curl http://localhost:8000/generators/minimax
-```
-
-### Artifact Endpoints
-
-**List Artifacts:**
-```bash
-curl http://localhost:8000/artifacts
-```
-
-**Download Artifact:**
-```bash
-curl http://localhost:8000/artifacts/{artifact_id}/download
+curl "http://localhost:8000/v1/jobs/{job_id}/video-url?expiration_seconds=7200"
 ```
 
 ## Testing with Different Environments
@@ -246,7 +217,7 @@ curl http://localhost:8000/openapi.json > api-spec.json
 ```bash
 # Install httpie: pip install httpie
 http GET localhost:8000/healthz
-http POST localhost:8000/jobs prompt="A cat playing with a ball"
+http POST localhost:8000/v1/jobs prompt="A cat playing with a ball"
 ```
 
 ## Environment Variables
@@ -273,7 +244,7 @@ WORKER_CONCURRENCY=1            # Jobs per worker
 
 # GCS settings (optional for basic testing)
 GCS_BUCKET=ttv-api-artifacts
-GCS_CREDENTIALS_PATH=/app/credentials/gcs-key.json
+GCS_CREDENTIALS_PATH=/app/credentials/credentials.json
 ```
 
 ## Next Steps
