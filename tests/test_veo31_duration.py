@@ -14,6 +14,7 @@ from pipeline import (
     VideoPrompt,
     build_prompt_enhancement_instructions,
     enhance_prompt_data,
+    generate_video_chaining_mode,
     generate_video_segments_single_keyframe,
     get_duration_tradeoff,
     get_requested_job_timeout,
@@ -180,6 +181,44 @@ def test_inferred_veo_fallback_uses_configured_duration(tmp_path):
             str(tmp_path),
         )
 
+    assert fallback.generate_video.call_args.kwargs["duration"] == 5
+
+
+def test_chaining_veo_fallback_uses_configured_duration(tmp_path):
+    frame = tmp_path / "frame.png"
+    frame.touch()
+    primary = Mock()
+    primary.get_backend_name.return_value = "veo3"
+    primary.validate_inputs.return_value = []
+    primary.generate_video.side_effect = VideoGenerationError("Veo failed")
+    fallback = Mock()
+    fallback.get_backend_name.return_value = "minimax"
+    fallback.validate_inputs.return_value = []
+
+    def generate_fallback(**kwargs):
+        with open(kwargs["output_path"], "wb") as file:
+            file.write(b"video")
+        return kwargs["output_path"]
+
+    fallback.generate_video.side_effect = generate_fallback
+    config = {
+        "default_backend": "veo3",
+        "initial_image": str(frame),
+        "segment_duration_seconds": 5,
+        "remote_api_settings": {"fallback_backend": "minimax"},
+    }
+
+    with patch("pipeline.create_video_generator", return_value=primary), \
+         patch("pipeline.get_fallback_generator", return_value=fallback):
+        generate_video_chaining_mode(
+            config,
+            [{"segment": 1, "prompt": "move", "duration_seconds": 8}],
+            str(tmp_path),
+            segment_duration=5,
+        )
+
+    assert primary.validate_inputs.call_args.kwargs["duration"] == 8
+    assert fallback.validate_inputs.call_args.kwargs["duration"] == 5
     assert fallback.generate_video.call_args.kwargs["duration"] == 5
 
 

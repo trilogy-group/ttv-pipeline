@@ -199,6 +199,18 @@ def get_video_generation_backend(config: Dict) -> str:
     return str(default_backend).lower()
 
 
+def get_provider_compatible_duration(
+    config: Dict,
+    primary_backend: str,
+    attempt_backend: str,
+    planned_duration: float,
+) -> float:
+    """Use generic clip duration when a non-Veo backend replaces Veo."""
+    if str(primary_backend).lower() == "veo3" and str(attempt_backend).lower() != "veo3":
+        return config.get("segment_duration_seconds", 5.0)
+    return planned_duration
+
+
 def resolve_frame_reference(frame_ref: Optional[str], frames_dir: str) -> Optional[str]:
     """Resolve a prompt frame reference within the output frames directory."""
     if not frame_ref:
@@ -1023,13 +1035,11 @@ def generate_video_segments_single_keyframe(
             fallback_generator = factory.get_fallback_generator(backend, config)
             if fallback_generator:
                 logging.info(f"Trying fallback generator for segment {seg}")
-                fallback_backend = str(
-                    config.get("remote_api_settings", {}).get("fallback_backend", "")
-                ).lower()
-                fallback_duration = (
-                    config.get("segment_duration_seconds", 5.0)
-                    if backend == "veo3" and fallback_backend != "veo3"
-                    else segment_duration
+                fallback_duration = get_provider_compatible_duration(
+                    config,
+                    backend,
+                    fallback_generator.get_backend_name(),
+                    segment_duration,
                 )
                 fallback_generator.generate_video(
                     prompt=prompt_text,
@@ -1392,12 +1402,19 @@ def generate_video_chaining_mode(
 
         while attempt_generator:
             try:
-                logging.info(f"Attempting segment {seg} with {attempt_generator.get_backend_name()}...")
+                attempt_backend_name = attempt_generator.get_backend_name()
+                attempt_duration = get_provider_compatible_duration(
+                    config,
+                    config.get("default_backend", "wan2.1"),
+                    attempt_backend_name,
+                    item_duration,
+                )
+                logging.info(f"Attempting segment {seg} with {attempt_backend_name}...")
 
                 validation_errors = attempt_generator.validate_inputs(
                     prompt=prompt_text,
                     input_image_path=input_image,
-                    duration=item_duration
+                    duration=attempt_duration
                 )
                 if validation_errors:
                     logging.error(f"Input validation failed for segment {seg} with {attempt_generator.get_backend_name()}: {validation_errors}")
@@ -1407,7 +1424,7 @@ def generate_video_chaining_mode(
                     prompt=prompt_text,
                     input_image_path=input_image,
                     output_path=video_file_output_path,
-                    duration=item_duration,
+                    duration=attempt_duration,
                     frame_num=config.get("frame_num", 81) # Pass frame_num from main config if available
                 )
 
