@@ -82,7 +82,7 @@ class VideoPrompt(BaseModel):
     prompt: str
     first_frame: Optional[str] = None
     last_frame: Optional[str] = None
-    duration_seconds: Optional[int] = None
+    duration_seconds: int
 
 class PromptEnhancementResult(BaseModel):
     segmentation_logic: SegmentationLogic
@@ -125,6 +125,7 @@ Generate Keyframe Prompts
 Generate Video Prompts
 - Write one text-to-video prompt for each segment.
 - Detail actions, camera movements, and style.
+- Include `duration_seconds` for every video prompt; use 5 unless backend-specific requirements say otherwise.
 - Reference the first frame (`provided_start_image.png` for segment 1, `segment_XX.png` for others) and last frame (`segment_YY.png`).
 - Ensure each prompt is standalone with full context.
 
@@ -164,13 +165,15 @@ Expected Output (JSON):
       "segment": 1,
       "prompt": "The camera tracks behind a woman in a red dress as she begins running across a rainy street at night, cinematic lighting, streetlights reflecting on wet pavement, rendered in a realistic style.",
       "first_frame": "provided_start_image.png",
-      "last_frame": "segment_01.png"
+      "last_frame": "segment_01.png",
+      "duration_seconds": 5
     },
     {
       "segment": 2,
       "prompt": "The camera continues tracking behind the woman in a red dress as she completes her run across the rainy street at night, cinematic lighting, streetlights reflecting on wet pavement, rendered in a realistic style.",
       "first_frame": "segment_01.png",
-      "last_frame": "segment_02.png"
+      "last_frame": "segment_02.png",
+      "duration_seconds": 5
     }
   ]
 }
@@ -180,14 +183,36 @@ Respond ONLY with the JSON response formatted as above, with NO wrapper or comme
 
 VEO_CLIP_DURATIONS = (4, 6, 8)
 MAX_REQUESTED_DURATION_SECONDS = 14_440
+MAX_PROMPT_SEGMENTS_PER_CALL = 20
 
 
 def get_video_generation_backend(config: Dict) -> str:
     """Return the backend used for video generation."""
-    return str(
-        config.get("default_video_generation_backend")
-        or config.get("default_backend", "wan2.1")
-    ).lower()
+    default_backend = config.get("default_backend", "wan2.1")
+    if (
+        str(config.get("generation_mode", "keyframe")).lower() == "keyframe"
+        and config.get("single_keyframe_mode", False)
+    ):
+        return str(
+            config.get("default_video_generation_backend") or default_backend
+        ).lower()
+    return str(default_backend).lower()
+
+
+def resolve_frame_reference(frame_ref: Optional[str], frames_dir: str) -> Optional[str]:
+    """Resolve a prompt frame reference within the output frames directory."""
+    if not frame_ref:
+        return None
+    if frame_ref == "provided_start_image.png":
+        frame_ref = "segment_00.png"
+    if os.path.isabs(frame_ref):
+        return os.path.abspath(frame_ref)
+
+    frames_dir = os.path.abspath(frames_dir)
+    frame_path = os.path.abspath(os.path.join(frames_dir, frame_ref))
+    if os.path.commonpath((frames_dir, frame_path)) != frames_dir:
+        raise ValueError(f"Invalid frame path: {frame_ref}")
+    return frame_path
 
 
 def plan_veo_segment_durations(duration_seconds: int) -> List[int]:
@@ -344,7 +369,75 @@ def enhance_prompt_data(prompt: str, config: Dict) -> Dict:
         base_url=config.get("openai_base_url", "https://api.openai.com/v1"),
         model=config.get("prompt_enhancement_model", "gpt-4o-mini"),
     )
-    result = enhancer.enhance(build_prompt_enhancement_instructions(config), prompt)
+    plan = get_requested_segment_plan(config)
+    if not plan or len(plan) <= MAX_PROMPT_SEGMENTS_PER_CALL:
+        result = enhancer.enhance(build_prompt_enhancement_instructions(config), prompt)
+    else:
+        keyframe_prompts = []
+        video_prompts = []
+        reasonings = []
+        batch_count = (
+            len(plan) + MAX_PROMPT_SEGMENTS_PER_CALL - 1
+        ) // MAX_PROMPT_SEGMENTS_PER_CALL
+
+        for batch_index, offset in enumerate(
+            range(0, len(plan), MAX_PROMPT_SEGMENTS_PER_CALL), start=1
+        ):
+            batch_plan = plan[offset:offset + MAX_PROMPT_SEGMENTS_PER_CALL]
+            batch_config = {**config, "duration_seconds": sum(batch_plan)}
+            first_segment = offset + 1
+            last_segment = offset + len(batch_plan)
+            batch_prompt = (
+                f"{prompt}\n\nGenerate only batch {batch_index} of {batch_count}, "
+                f"covering global segments {first_segment} through {last_segment}. "
+                "Number this batch locally starting at 1; the pipeline will renumber it. "
+                "Continue the same narrative rather than restarting it."
+            )
+            if video_prompts:
+                batch_prompt += (
+                    " The previous batch ended with: "
+                    f"{video_prompts[-1]['prompt']}"
+                )
+
+            batch_result = enhancer.enhance(
+                build_prompt_enhancement_instructions(batch_config), batch_prompt
+            )
+            validate_prompt_enhancement(batch_result, batch_config)
+            reasonings.append(batch_result["segmentation_logic"]["reasoning"])
+
+            for local_index, (keyframe_prompt, video_prompt) in enumerate(
+                zip(
+                    batch_result["keyframe_prompts"],
+                    batch_result["video_prompts"],
+                    strict=True,
+                ),
+                start=1,
+            ):
+                segment = offset + local_index
+                keyframe_prompt = {**keyframe_prompt, "segment": segment}
+                video_prompt = {
+                    **video_prompt,
+                    "segment": segment,
+                    "first_frame": (
+                        "provided_start_image.png"
+                        if segment == 1
+                        else f"segment_{segment - 1:02d}.png"
+                    ),
+                    "last_frame": f"segment_{segment:02d}.png",
+                }
+                keyframe_prompts.append(keyframe_prompt)
+                video_prompts.append(video_prompt)
+
+        result = {
+            "segmentation_logic": {
+                "total_duration_seconds": int(config["duration_seconds"]),
+                "number_of_segments": len(plan),
+                "reasoning": " ".join(reasonings),
+            },
+            "keyframe_prompts": keyframe_prompts,
+            "video_prompts": video_prompts,
+        }
+
     validate_prompt_enhancement(result, config)
     tradeoff = get_duration_tradeoff(config)
     if tradeoff:
@@ -494,14 +587,7 @@ def prepare_keyframes(
             frame_ref = prompt_item.get(field)
             if not frame_ref:
                 continue
-            if frame_ref == "provided_start_image.png":
-                frame_ref = "segment_00.png"
-            if os.path.isabs(frame_ref):
-                frame_path = os.path.abspath(frame_ref)
-            else:
-                frame_path = os.path.abspath(os.path.join(frames_dir, frame_ref))
-                if os.path.commonpath((frames_dir, frame_path)) != frames_dir:
-                    raise ValueError(f"Invalid {field} path: {frame_ref}")
+            frame_path = resolve_frame_reference(frame_ref, frames_dir)
             if not os.path.exists(frame_path):
                 raise FileNotFoundError(f"{field} not found: {frame_path}")
             prompt_item[field] = frame_path
@@ -865,7 +951,9 @@ def generate_video_segments_single_keyframe(
         segment_duration = prompt_item.get(
             "duration_seconds", config.get("segment_duration_seconds", 5.0)
         )
-        last_frame_path = prompt_item.get("last_frame")
+        last_frame_path = resolve_frame_reference(
+            prompt_item.get("last_frame"), frames_dir_abs
+        )
 
         # Veo first/last-frame generation always starts from the first frame.
         if backend == 'veo3':
@@ -881,17 +969,7 @@ def generate_video_segments_single_keyframe(
             # Default to first frame
             keyframe_path = prompt_item.get('first_frame', prompt_item.get('last_frame'))
 
-        # Fix keyframe path to use absolute path
-        if keyframe_path:
-            if keyframe_path == 'provided_start_image.png':
-                # This should be segment_00.png
-                keyframe_path = os.path.join(frames_dir_abs, 'segment_00.png')
-            elif keyframe_path.startswith('segment_') and keyframe_path.endswith('.png'):
-                # Convert relative segment reference to absolute path
-                keyframe_path = os.path.join(frames_dir_abs, keyframe_path)
-            else:
-                # For any other reference, try to resolve it
-                keyframe_path = os.path.join(frames_dir_abs, keyframe_path)
+        keyframe_path = resolve_frame_reference(keyframe_path, frames_dir_abs)
 
         if not keyframe_path:
             logging.error(f"No keyframe found for segment {seg}")
@@ -926,11 +1004,19 @@ def generate_video_segments_single_keyframe(
             fallback_generator = factory.get_fallback_generator(backend, config)
             if fallback_generator:
                 logging.info(f"Trying fallback generator for segment {seg}")
+                fallback_backend = str(
+                    config.get("remote_api_settings", {}).get("fallback_backend", "")
+                ).lower()
+                fallback_duration = (
+                    config.get("segment_duration_seconds", 5.0)
+                    if backend == "veo3" and fallback_backend != "veo3"
+                    else segment_duration
+                )
                 fallback_generator.generate_video(
                     prompt=prompt_text,
                     input_image_path=keyframe_path,
                     output_path=video_file,
-                    duration=segment_duration,
+                    duration=fallback_duration,
                     last_frame_path=last_frame_path,
                 )
                 video_paths.append(video_file)
