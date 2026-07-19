@@ -9,6 +9,76 @@ from tests.mocks.mock_redis import MockJobQueue, MockRedisManager
 from workers.video_worker import process_video_job
 
 
+def reviewed_plan():
+    return {
+        "segmentation_logic": {
+            "total_duration_seconds": 4,
+            "number_of_segments": 1,
+            "reasoning": "reviewed",
+        },
+        "keyframe_prompts": [{"segment": 1, "prompt": "frame"}],
+        "video_prompts": [{
+            "segment": 1,
+            "prompt": "move",
+            "first_frame": "provided_start_image.png",
+            "last_frame": "segment_01.png",
+            "duration_seconds": 4,
+        }],
+    }
+
+
+def test_api_creates_and_resumes_reviewed_plan():
+    pipeline_config = {
+        "default_backend": "veo3",
+        "generation_mode": "keyframe",
+        "single_keyframe_mode": True,
+        "openai_api_key": "test-secret",
+    }
+    api_config = APIConfig(
+        gcs=GCSConfig(bucket="test-bucket"),
+        pipeline_config=pipeline_config,
+    )
+    queue = MockJobQueue(MockRedisManager(api_config.redis))
+    app = create_app()
+    app.state.config = api_config
+    app.state.job_queue = queue
+    client = TestClient(app)
+    plan = reviewed_plan()
+    long_prompt = "# Brief\n\n" + "A" * 3000
+
+    with patch("pipeline.enhance_prompt_data", return_value=plan) as enhance:
+        plan_response = client.post(
+            "/v1/plans",
+            json={"prompt": long_prompt, "duration_seconds": 4},
+        )
+
+    assert plan_response.status_code == 200
+    assert plan_response.json() == plan
+    assert enhance.call_args.args[0] == long_prompt
+    assert enhance.call_args.args[1]["duration_seconds"] == 4
+
+    create_response = client.post(
+        "/v1/jobs",
+        json={"duration_seconds": 4, "enhanced_prompt": plan},
+    )
+    assert create_response.status_code == 202
+    stored_job = queue.get_job(create_response.json()["id"])
+    assert stored_job.prompt == "Resumed from reviewed prompt plan"
+    assert stored_job.config["enhanced_prompt"] == plan
+
+    storyboard_response = client.post(
+        "/v1/jobs",
+        json={
+            "duration_seconds": 4,
+            "enhanced_prompt": plan,
+            "keyframes_only": True,
+        },
+    )
+    assert storyboard_response.status_code == 202
+    storyboard_job = queue.get_job(storyboard_response.json()["id"])
+    assert storyboard_job.config["keyframes_only"] is True
+
+
 def test_mocked_api_job_reaches_worker_with_effective_config():
     pipeline_config = {
         "prompt": "default prompt",

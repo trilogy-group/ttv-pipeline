@@ -190,6 +190,41 @@ class TestPipelineExecution:
                 mock_stitch.assert_called_once()
                 mock_upload.assert_called_once()
 
+    @pytest.mark.trio
+    async def test_keyframes_only_uploads_storyboard_and_skips_video(self):
+        job_id = "test_storyboard"
+        config = {"keyframes_only": True, "gcs_bucket": "test_bucket"}
+
+        with trio.CancelScope() as cancel_scope:
+            token = TrioCancellationToken(job_id, cancel_scope)
+            mock_queue = Mock()
+
+            with patch(
+                'workers.trio_video_worker.enhance_prompt_trio'
+            ) as mock_enhance, patch(
+                'workers.trio_video_worker.generate_keyframes_trio'
+            ) as mock_keyframes, patch(
+                'workers.trio_video_worker.generate_video_segments_trio'
+            ) as mock_videos, patch(
+                'workers.trio_video_worker.check_cancellation_async',
+                return_value=False,
+            ), patch(
+                'workers.trio_video_worker.trio.to_thread.run_sync',
+                return_value='gs://test_bucket/job/keyframe_storyboard.zip',
+            ):
+                mock_enhance.return_value = {
+                    'keyframe_prompts': [{'segment': 1, 'prompt': 'frame'}],
+                    'video_prompts': [{'segment': 1, 'prompt': 'move'}],
+                }
+                mock_keyframes.return_value = ['frame.png']
+
+                result = await execute_pipeline_with_trio(
+                    job_id, "prompt", config, token, mock_queue, None
+                )
+
+        assert result == 'gs://test_bucket/job/keyframe_storyboard.zip'
+        mock_videos.assert_not_called()
+
 
 class TestPipelineComponents:
     """Test individual pipeline components"""

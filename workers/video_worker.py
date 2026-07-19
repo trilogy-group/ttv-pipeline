@@ -452,6 +452,42 @@ def execute_pipeline_with_config(
             )
             
             logger.info(f"Generated {len(keyframe_paths)} keyframes")
+
+            if final_config.get("keyframes_only"):
+                if check_cancellation(cancellation_token, job_id):
+                    raise InterruptedError("Job cancelled before storyboard upload")
+
+                job_queue.update_job_status(job_id, JobStatus.PROGRESS, progress=90)
+                job_queue.add_job_log(job_id, "Uploading keyframe storyboard artifact")
+                from api.config import GCSConfig
+                from workers.gcs_uploader import (
+                    create_keyframe_storyboard_archive,
+                    upload_named_job_artifact,
+                )
+
+                archive_path = create_keyframe_storyboard_archive(
+                    job_output_dir, enhancement_result
+                )
+                gcs_uri = upload_named_job_artifact(
+                    local_file_path=archive_path,
+                    job_id=job_id,
+                    gcs_config=GCSConfig(
+                        bucket=final_config.get('gcs_bucket', 'ttv-api-artifacts'),
+                        prefix=final_config.get('gcs_prefix', 'ttv-api'),
+                        credentials_path=final_config.get(
+                            'credentials_path', 'credentials.json'
+                        ),
+                        signed_url_expiration=final_config.get(
+                            'signed_url_expiration', 3600
+                        ),
+                    ),
+                    artifact_name="keyframe_storyboard.zip",
+                )
+                if not gcs_uri:
+                    raise Exception("Storyboard upload returned None - upload failed")
+                job_queue.update_job_status(job_id, JobStatus.PROGRESS, progress=95)
+                job_queue.add_job_log(job_id, f"Storyboard upload completed: {gcs_uri}")
+                return gcs_uri
             
             # Phase 5: Video segment generation (80%)
             if check_cancellation(cancellation_token, job_id):

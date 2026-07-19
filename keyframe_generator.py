@@ -18,7 +18,7 @@ import requests
 from typing import Optional, Dict, Any
 import time
 
-from PIL import Image
+from PIL import Image, ImageOps
 from google import genai
 from google.genai import types
 
@@ -455,7 +455,6 @@ def generate_keyframe_with_gemini(
                     if os.path.exists(image_path):
                         # Validate that the reference image is valid before using it
                         try:
-                            from PIL import Image
                             img = Image.open(image_path)
                             img.verify()  # Verify it's a valid image
                             with open(image_path, "rb") as f:
@@ -478,7 +477,6 @@ def generate_keyframe_with_gemini(
         if input_image_path and os.path.exists(input_image_path):
             # Validate that the input image is valid before using it
             try:
-                from PIL import Image
                 img = Image.open(input_image_path)
                 img.verify()  # Verify it's a valid image
                 logging.info(f"Using input image for I2I: {input_image_path}")
@@ -555,14 +553,32 @@ def generate_keyframe_with_gemini(
                         
                         # Create directory if it doesn't exist
                         os.makedirs(os.path.dirname(output_path), exist_ok=True)
-                        
-                        # Save the image
-                        with open(output_path, "wb") as f:
-                            f.write(image_bytes)
+
+                        # The API may return JPEG bytes for a requested .png path.
+                        # Normalize the bytes so downstream MIME detection is truthful.
+                        image = Image.open(io.BytesIO(image_bytes))
+                        image.load()
+                        if input_image_path and os.path.exists(input_image_path):
+                            with Image.open(input_image_path) as input_image:
+                                expected_size = input_image.size
+                            if image.size != expected_size:
+                                logging.info(
+                                    "Normalizing edited frame from %s to %s",
+                                    image.size,
+                                    expected_size,
+                                )
+                                image = ImageOps.fit(
+                                    image,
+                                    expected_size,
+                                    method=Image.Resampling.LANCZOS,
+                                )
+                        if Path(output_path).suffix.lower() == ".png":
+                            image.save(output_path, format="PNG")
+                        else:
+                            image.save(output_path)
                         
                         # Validate that the saved image is valid
                         try:
-                            from PIL import Image
                             img = Image.open(output_path)
                             img.verify()  # Verify it's a valid image
                             logging.info(f"Image saved and verified: {output_path}")
@@ -738,10 +754,12 @@ def generate_keyframes_from_json(json_file, output_dir, model_name=None, imageRo
     # Variable to track the previous image path for sequential generation
     prev_image_path = initial_image_path
     
-    # Generate each keyframe sequentially, using the previous keyframe as input
+    # Continue within a scene; reset image conditioning at explicit cuts.
     for item in sorted(data["keyframe_prompts"], key=lambda x: x.get("segment", 0)):
         segment = item.get("segment")
         prompt = item.get("prompt")
+        transition = item.get("transition", "continue")
+        start_prompt = item.get("start_prompt")
         
         if not segment or not prompt:
             logging.warning(f"Skipping invalid keyframe prompt item: {item}")
@@ -755,8 +773,40 @@ def generate_keyframes_from_json(json_file, output_dir, model_name=None, imageRo
         # The keyframe message is already shown in colored output
         
         try:
-            # Generate keyframe image
-            if prev_image_path:
+            if transition == "cut":
+                if not start_prompt:
+                    raise ValueError(f"Cut segment {segment} requires start_prompt")
+                start_path = os.path.join(output_dir, f"segment_{segment:02d}_start.png")
+                logging.info(f"Generating independent scene start: {start_path}")
+                generate_keyframe(
+                    prompt=start_prompt,
+                    output_path=start_path,
+                    model_name=model_name,
+                    imageRouter_api_key=imageRouter_api_key,
+                    stability_api_key=stability_api_key,
+                    openai_api_key=openai_api_key,
+                    gemini_api_key=gemini_api_key,
+                    input_image_path=None,
+                    size=image_size,
+                    create_mask=False,
+                    reference_images_dir=reference_images_dir,
+                    max_retries=max_retries,
+                )
+                generated_file = generate_keyframe(
+                    prompt=prompt,
+                    output_path=output_path,
+                    model_name=model_name,
+                    imageRouter_api_key=imageRouter_api_key,
+                    stability_api_key=stability_api_key,
+                    openai_api_key=openai_api_key,
+                    gemini_api_key=gemini_api_key,
+                    input_image_path=start_path,
+                    size=image_size,
+                    create_mask=False,
+                    reference_images_dir=reference_images_dir,
+                    max_retries=max_retries,
+                )
+            elif prev_image_path:
                 # Only keep one of the prev image messages
                 logging.info(f"Using previous keyframe as input: {prev_image_path}")
                 generated_file = generate_keyframe(
@@ -775,24 +825,8 @@ def generate_keyframes_from_json(json_file, output_dir, model_name=None, imageRo
                     max_retries=max_retries
                 )
             else:
-                # For first keyframe, use initial image if provided
-                initial_input = initial_image_path if segment == 1 and initial_image_path else None
-                if initial_input:
-                    logging.info(f"Using initial image as input for first keyframe: {initial_input}")
-                
-                generated_file = generate_keyframe(
-                    prompt=prompt,
-                    output_path=output_path,
-                    model_name=model_name,
-                    imageRouter_api_key=imageRouter_api_key,
-                    stability_api_key=stability_api_key,
-                    openai_api_key=openai_api_key,
-                    gemini_api_key=gemini_api_key,
-                    input_image_path=initial_input,
-                    size=image_size,
-                    create_mask=False,
-                    reference_images_dir=reference_images_dir,
-                    max_retries=max_retries
+                raise ValueError(
+                    f"Continue segment {segment} has no previous or initial frame"
                 )
             
             generated_files.append(generated_file)

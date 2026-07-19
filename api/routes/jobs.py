@@ -11,11 +11,49 @@ from fastapi import APIRouter, HTTPException, Request
 
 from api.config_merger import ConfigMerger
 from api.logging_config import get_logger
-from api.models import JobCreateRequest, JobCreateResponse, JobStatus, JobStatusResponse
+from api.models import (
+    JobCreateRequest,
+    JobCreateResponse,
+    JobStatus,
+    JobStatusResponse,
+    PlanCreateRequest,
+    PromptEnhancementResult,
+)
 from api.queue import JobQueue
 
 logger = get_logger(__name__)
 router = APIRouter(tags=["jobs"])
+plans_router = APIRouter(tags=["plans"])
+
+
+@plans_router.post(
+    "",
+    response_model=PromptEnhancementResult,
+    response_model_exclude_unset=True,
+)
+async def create_plan(
+    request_obj: Request,
+    request: PlanCreateRequest,
+) -> PromptEnhancementResult:
+    """Create an editable prompt plan without starting media generation."""
+    api_config = getattr(request_obj.app.state, "config", None)
+    if not api_config or not isinstance(api_config.pipeline_config, dict):
+        raise HTTPException(status_code=503, detail="Pipeline configuration not available")
+
+    effective_config = ConfigMerger().merge_for_job(
+        api_config.pipeline_config,
+        request.prompt,
+        request.duration_seconds,
+    )
+
+    from pipeline import enhance_prompt_data
+
+    try:
+        return PromptEnhancementResult.model_validate(
+            enhance_prompt_data(request.prompt, effective_config)
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
 
 
 @router.post("", response_model=JobCreateResponse, status_code=202)
@@ -35,11 +73,23 @@ async def create_job(request_obj: Request, request: JobCreateRequest) -> JobCrea
     if not api_config or not isinstance(api_config.pipeline_config, dict):
         raise HTTPException(status_code=503, detail="Pipeline configuration not available")
 
+    job_prompt = request.prompt or "Resumed from reviewed prompt plan"
     effective_config = ConfigMerger().merge_for_job(
         api_config.pipeline_config,
-        request.prompt,
+        job_prompt,
         request.duration_seconds,
     )
+    if request.enhanced_prompt is not None:
+        effective_config["enhanced_prompt"] = request.enhanced_prompt.model_dump(
+            exclude_unset=True
+        )
+    if request.keyframes_only:
+        effective_config["keyframes_only"] = True
+        if effective_config.get("generation_mode", "keyframe").lower() != "keyframe":
+            raise HTTPException(
+                status_code=422,
+                detail="keyframes_only requires generation_mode=keyframe",
+            )
     effective_config.update(
         {
             "gcs_bucket": api_config.gcs.bucket,
@@ -63,7 +113,7 @@ async def create_job(request_obj: Request, request: JobCreateRequest) -> JobCrea
         job_timeout=job_timeout,
     )
 
-    logger.info(f"Created job {job.id} with prompt: {request.prompt[:50]}...")
+    logger.info(f"Created job {job.id} with prompt: {job_prompt[:50]}...")
 
     return JobCreateResponse(
         id=job.id,

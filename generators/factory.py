@@ -115,22 +115,34 @@ def create_video_generator(backend: str, config: Dict[str, Any]) -> VideoGenerat
             # Google Veo 3 configuration
             veo_config = config.get("google_veo", {})
             remote_settings = config.get("remote_api_settings", {})
-            
+            import os
+
+            project_id = veo_config.get("project_id")
+            veo_model = veo_config.get("veo_model")
+            use_developer_api = not project_id or bool(
+                veo_model and veo_model.endswith("-preview")
+            )
+            api_key = veo_config.get("api_key")
+            if use_developer_api and not api_key:
+                api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
+
             backend_config = {
-                "project_id": veo_config.get("project_id"),
+                "api_key": api_key,
+                "project_id": project_id,
                 "credentials_path": veo_config.get("credentials_path", "credentials.json"),
                 "region": veo_config.get("region", "global"),
                 "output_bucket": veo_config.get("output_bucket"),
-                "veo_model": veo_config.get("veo_model", Veo3Generator.MODEL_NAME),
+                "veo_model": veo_model,
                 "video_aspect_ratio": config.get("video_aspect_ratio", "16:9"),
+                "resolution": veo_config.get("resolution", "720p"),
                 "max_retries": remote_settings.get("max_retries", 3),
                 "polling_interval": remote_settings.get("polling_interval", 15),
                 "timeout": remote_settings.get("timeout", 600),
             }
-            
-            if not backend_config["project_id"]:
+
+            if not api_key and not backend_config["project_id"]:
                 raise VideoGenerationError(
-                    "Google Veo 3 requires a project ID"
+                    "Google Veo 3 requires GOOGLE_API_KEY or a Google Cloud project ID"
                 )
         
         elif backend == "minimax":

@@ -120,7 +120,7 @@ class TestPipelineIntegration:
 
             get_fallback.assert_called_once_with("primary", config)
             fallback.generate_video.assert_called_once()
-            assert result == [os.path.join(output_dir, "segment_001.mp4")]
+            assert result == [os.path.join(output_dir, "videos", "segment_001.mp4")]
 
     def test_single_keyframe_generation_falls_back_when_backend_init_fails(self):
         with tempfile.TemporaryDirectory() as output_dir:
@@ -136,7 +136,7 @@ class TestPipelineIntegration:
                  patch("generators.factory.get_fallback_generator", return_value=fallback):
                 result = generate_video_segments_single_keyframe(config, prompts, output_dir)
 
-            expected_path = os.path.join(output_dir, "segment_001.mp4")
+            expected_path = os.path.join(output_dir, "videos", "segment_001.mp4")
             assert fallback.generate_video.call_args.kwargs["output_path"] == expected_path
             assert result == [expected_path]
 

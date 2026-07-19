@@ -139,7 +139,11 @@ class JobQueue:
             id=job_id,
             status=JobStatus.QUEUED,
             created_at=created_at,
-            prompt=request.prompt,
+            prompt=(
+                request.prompt
+                or effective_config.get("prompt")
+                or "Resumed from reviewed prompt plan"
+            ),
             config=redact_config_secrets(effective_config)
         )
         
