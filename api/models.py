@@ -5,7 +5,7 @@ Pydantic models for API request/response validation and job management.
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Optional, List, Dict, Any
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, StrictInt, field_validator
 
 
 class JobStatus(str, Enum):
@@ -26,6 +26,11 @@ class JobCreateRequest(BaseModel):
         max_length=2000,
         description="Text prompt for video generation"
     )
+    duration_seconds: Optional[StrictInt] = Field(
+        None,
+        gt=0,
+        description="Requested final runtime in seconds (currently supported by Veo 3)",
+    )
     
     @field_validator('prompt')
     @classmethod
@@ -42,6 +47,7 @@ class JobCreateResponse(BaseModel):
     id: str = Field(..., description="Unique job identifier")
     status: JobStatus = Field(default=JobStatus.QUEUED, description="Initial job status")
     created_at: datetime = Field(..., description="Job creation timestamp")
+    warnings: List[str] = Field(default_factory=list, description="Generation tradeoffs")
 
 
 class JobStatusResponse(BaseModel):

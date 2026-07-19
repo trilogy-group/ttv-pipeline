@@ -266,6 +266,11 @@ components:
           maxLength: 2000
           description: Text prompt for video generation
           example: "A cat playing with a ball of yarn in a sunny garden"
+        duration_seconds:
+          type: integer
+          minimum: 1
+          nullable: true
+          description: Requested final runtime in seconds (currently supported by Veo 3)
 
     JobCreateResponse:
       type: object
@@ -284,6 +289,11 @@ components:
           type: string
           format: date-time
           description: Job creation timestamp
+        warnings:
+          type: array
+          items:
+            type: string
+          description: Generation tradeoffs, including final-frame loss when a Veo clip must be trimmed
 
     JobStatusResponse:
       type: object

@@ -405,8 +405,9 @@ def execute_pipeline_with_config(
             
             # Import pipeline functions
             from pipeline import (
-                PromptEnhancer, stitch_video_segments,
-                PROMPT_ENHANCEMENT_INSTRUCTIONS,
+                enhance_prompt_data,
+                get_trim_duration_seconds,
+                stitch_video_segments,
             )
             final_config = config
             
@@ -422,15 +423,8 @@ def execute_pipeline_with_config(
             job_queue.update_job_status(job_id, JobStatus.PROGRESS, progress=20)
             job_queue.add_job_log(job_id, "Enhancing and segmenting prompt")
             
-            # Initialize prompt enhancer
-            enhancer = PromptEnhancer(
-                api_key=final_config.get('openai_api_key'),
-                base_url=final_config.get('openai_base_url', 'https://api.openai.com/v1'),
-                model=final_config.get('prompt_enhancement_model', 'gpt-4o-mini')
-            )
-            
             # Enhance and segment the prompt
-            enhancement_result = enhancer.enhance(PROMPT_ENHANCEMENT_INSTRUCTIONS, prompt)
+            enhancement_result = enhance_prompt_data(prompt, final_config)
             
             keyframe_prompts = enhancement_result['keyframe_prompts']
             video_prompts = enhancement_result['video_prompts']
@@ -490,7 +484,11 @@ def execute_pipeline_with_config(
             
             # Stitch segments together
             final_video_path = os.path.join(job_output_dir, "final_video.mp4")
-            stitched_path = stitch_video_segments(video_paths, final_video_path)
+            stitched_path = stitch_video_segments(
+                video_paths,
+                final_video_path,
+                get_trim_duration_seconds(final_config),
+            )
             
             if not stitched_path or not os.path.exists(stitched_path):
                 raise Exception("Failed to stitch video segments")

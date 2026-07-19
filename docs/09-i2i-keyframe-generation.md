@@ -9,7 +9,7 @@ The TTV Pipeline now supports Image-to-Image (I2I) keyframe generation using Goo
 - **Character Consistency**: Maintain consistent character appearance across multiple video segments
 - **Setting Preservation**: Keep environments and backgrounds consistent throughout the video
 - **Gemini API Integration**: Leverage Google's latest Gemini models for high-quality image generation
-- **Single-Keyframe Mode**: Compatible with Veo 3's image-to-video generation (no FLF support)
+- **Remote Keyframe Mode**: Sends each segment's first and last keyframes to Veo 3.1
 - **Reference Image Support**: Use multiple reference images to guide generation
 - **Flexible Configuration**: Easily enable/disable and configure through YAML settings
 
@@ -220,7 +220,7 @@ The implementation includes comprehensive error handling:
 
 ## Limitations
 
-1. **Veo 3 Compatibility**: Currently only supports single-keyframe mode (no FLF)
+1. **Veo 3.1 Compatibility**: Supports first/last-frame generation through the remote keyframe path
 2. **API Costs**: Gemini API usage incurs costs based on token consumption
 3. **Processing Time**: I2I generation adds latency to the pipeline
 4. **Image Size**: Veo 3 requires 1024x1024 square images

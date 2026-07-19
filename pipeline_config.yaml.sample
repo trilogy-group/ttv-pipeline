@@ -20,8 +20,8 @@ prompt: >
 # If set to "auto", the system will automatically select the best available backend
 default_backend: veo3
 
-# Generation mode settings (for local Wan2.1 backend)
-generation_mode: "chaining"  # Options: "keyframe" or "chaining"
+# Generation mode settings
+generation_mode: "keyframe"  # Required for Veo first/last-frame generation
 
 # ============================================================================
 # LOCAL BACKEND CONFIGURATION (Wan2.1)
@@ -79,7 +79,7 @@ google_veo:
   project_id: "YOUR_GCP_PROJECT_ID"      # Required for Veo 3
   credentials_path: "credentials/credentials.json"  # Path to service account credentials
   region: "us-central1"
-  veo_model: "veo-3.0-generate-preview"  # Veo 3
+  veo_model: "veo-3.1-generate-001"      # Or veo-3.1-fast-generate-001
 #  output_bucket: "your-output-bucket"    # Optional: GCS bucket for outputs
 
 # Remote API configuration - Minimax
@@ -119,7 +119,7 @@ image_generation_model: "gemini-2.5-flash-image-preview"
 # - For models supporting I2I (Gemini, Stability AI): reference images will be automatically loaded
 # - For models not supporting I2I (OpenAI): falls back to T2I generation
 # - If reference_images_dir is empty and auto_generate_initial is true, initial reference is generated
-# - Single keyframe mode is required for Veo3 (no FLF support)
+# - This remote-keyframe path sends both first and last frames to Veo 3.1
 # Reference images directory - place all reference images here
 # Images will be automatically loaded and used for character/setting consistency
 reference_images_dir: "input"  # Directory containing reference images
@@ -134,8 +134,8 @@ image_size: "1024x1024"  # 1:1 aspect ratio - compatible with veo3 input require
 # Auto-generate initial reference image if not provided
 auto_generate_initial: true  # Generate initial image if reference_images_dir is empty
 
-# Single keyframe mode for Veo3 (no FLF support)
-single_keyframe_mode: true   # Generate one keyframe per segment for I2V
+# Remote keyframe mode for Veo3
+single_keyframe_mode: true   # Send each segment's first and last keyframes to Veo
 
 # Position of keyframe for I2V generation: first/middle/last
 keyframe_position: "first"  # Position of keyframe: first/middle/last
@@ -169,6 +169,7 @@ video_aspect_ratio: "16:9"  # Default to widescreen landscape
 
 # Video generation parameters (applies to all backends)
 segment_duration_seconds: 5.0 # Desired duration for each video segment in seconds
+# duration_seconds: 15        # Optional requested final runtime; Veo plans 4/6/8s clips and trims only if needed
 frame_num: 81         # Number of frames (for ~5 seconds at 16fps)
 sample_steps: 40      # Sampling steps
 sample_shift: 5.0     # Sampling shift factor
