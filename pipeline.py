@@ -205,9 +205,18 @@ def get_provider_compatible_duration(
     attempt_backend: str,
     planned_duration: float,
 ) -> float:
-    """Use generic clip duration when a non-Veo backend replaces Veo."""
+    """Map fallback attempts to the receiving provider's duration contract."""
     if str(primary_backend).lower() == "veo3" and str(attempt_backend).lower() != "veo3":
         return config.get("segment_duration_seconds", 5.0)
+    if str(attempt_backend).lower() == "veo3" and planned_duration not in VEO_CLIP_DURATIONS:
+        return next(
+            (
+                duration
+                for duration in VEO_CLIP_DURATIONS
+                if duration >= planned_duration
+            ),
+            VEO_CLIP_DURATIONS[-1],
+        )
     return planned_duration
 
 
@@ -308,6 +317,9 @@ def build_prompt_enhancement_instructions(config: Dict) -> str:
     if backend == "minimax":
         instructions += "\n\nIMPORTANT: Each Minimax video prompt must be 500 characters or less."
     elif backend == "veo3":
+        instructions = instructions.replace(
+            '"total_duration_seconds": 10', '"total_duration_seconds": 8'
+        ).replace('"duration_seconds": 5', '"duration_seconds": 4')
         instructions += "\n\nIMPORTANT: Each Veo video prompt must be 1000 characters or less."
         plan = get_requested_segment_plan(config)
         if plan:

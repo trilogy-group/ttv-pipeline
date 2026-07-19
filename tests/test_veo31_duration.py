@@ -17,6 +17,7 @@ from pipeline import (
     generate_video_chaining_mode,
     generate_video_segments_single_keyframe,
     get_duration_tradeoff,
+    get_provider_compatible_duration,
     get_requested_job_timeout,
     get_requested_segment_plan,
     get_trim_duration_seconds,
@@ -121,8 +122,19 @@ def test_omitted_duration_keeps_veo_planning_ai_inferred():
     }
 
     validate_prompt_enhancement(result, config)
-    assert "Infer the final runtime" in build_prompt_enhancement_instructions(config)
+    instructions = build_prompt_enhancement_instructions(config)
+    assert "Infer the final runtime" in instructions
+    assert '"total_duration_seconds": 8' in instructions
+    assert instructions.count('"duration_seconds": 4') >= 2
+    assert '"duration_seconds": 5' not in instructions
     assert get_trim_duration_seconds(config) is None
+
+
+def test_fallback_to_veo_uses_supported_duration():
+    config = {"segment_duration_seconds": 5}
+
+    assert get_provider_compatible_duration(config, "minimax", "veo3", 5) == 6
+    assert get_provider_compatible_duration(config, "fal", "veo3", 9) == 8
 
 
 def test_pipeline_forwards_segment_duration_and_both_frames(tmp_path):
