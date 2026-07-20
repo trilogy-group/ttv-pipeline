@@ -47,6 +47,11 @@ def create_plan(
         request.prompt,
         request.duration_seconds,
     )
+    if not effective_config.get("openai_api_key") and not os.getenv("OPENAI_API_KEY"):
+        raise HTTPException(
+            status_code=503,
+            detail="Prompt enhancement credentials are not configured",
+        )
 
     from pipeline import enhance_prompt_data
 
@@ -101,9 +106,17 @@ async def create_job(request_obj: Request, request: JobCreateRequest) -> JobCrea
         }
     )
 
-    from pipeline import get_duration_tradeoff, get_requested_job_timeout
+    from pipeline import (
+        get_duration_tradeoff,
+        get_requested_job_timeout,
+        validate_prompt_enhancement,
+    )
 
     try:
+        if request.enhanced_prompt is not None:
+            validate_prompt_enhancement(
+                effective_config["enhanced_prompt"], effective_config
+            )
         tradeoff = get_duration_tradeoff(effective_config)
         job_timeout = get_requested_job_timeout(effective_config)
     except ValueError as error:

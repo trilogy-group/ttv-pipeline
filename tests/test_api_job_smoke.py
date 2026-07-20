@@ -93,6 +93,55 @@ def test_api_rejects_reviewed_plan_frame_paths():
     assert "Frame references must be filenames" in response.text
 
 
+def test_api_validates_reviewed_plan_before_enqueue():
+    api_config = APIConfig(
+        gcs=GCSConfig(bucket="test-bucket"),
+        pipeline_config={
+            "default_backend": "veo3",
+            "generation_mode": "keyframe",
+            "single_keyframe_mode": True,
+        },
+    )
+    queue = MockJobQueue(MockRedisManager(api_config.redis))
+    app = create_app()
+    app.state.config = api_config
+    app.state.job_queue = queue
+    plan = reviewed_plan()
+    plan["video_prompts"][0]["duration_seconds"] = 6
+
+    with patch.object(queue, "enqueue_job") as enqueue_job:
+        response = TestClient(app).post(
+            "/v1/jobs",
+            json={"duration_seconds": 4, "enhanced_prompt": plan},
+        )
+
+    assert response.status_code == 422
+    assert "requested segment plan" in response.text
+    enqueue_job.assert_not_called()
+
+
+def test_api_rejects_plan_creation_without_enhancer_credentials():
+    api_config = APIConfig(
+        gcs=GCSConfig(bucket="test-bucket"),
+        pipeline_config={
+            "default_backend": "veo3",
+            "generation_mode": "keyframe",
+            "single_keyframe_mode": True,
+        },
+    )
+    app = create_app()
+    app.state.config = api_config
+
+    with patch.dict("os.environ", {"OPENAI_API_KEY": ""}), patch(
+        "pipeline.enhance_prompt_data"
+    ) as enhance:
+        response = TestClient(app).post("/v1/plans", json={"prompt": "test"})
+
+    assert response.status_code == 503
+    assert "Prompt enhancement credentials are not configured" in response.text
+    enhance.assert_not_called()
+
+
 def test_storyboard_job_exposes_generic_artifact_metadata():
     api_config = APIConfig(
         gcs=GCSConfig(bucket="test-bucket"),
