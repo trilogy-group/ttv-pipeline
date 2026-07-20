@@ -5,7 +5,9 @@ This module provides a simple interface for workers to upload video artifacts
 to Google Cloud Storage and update job status with GCS URIs.
 """
 
+import json
 import logging
+import zipfile
 from pathlib import Path
 from typing import Optional
 
@@ -245,4 +247,44 @@ def upload_job_artifact(
         local_video_path=local_video_path,
         job_id=job_id,
         cleanup_local=cleanup_local
+    )
+
+
+def create_keyframe_storyboard_archive(output_dir: str, plan: dict) -> str:
+    """Package a plan and its generated frames into a durable ZIP artifact."""
+    output_path = Path(output_dir)
+    frames_path = output_path / "frames"
+    if not frames_path.is_dir():
+        raise FileNotFoundError(f"Keyframe directory not found: {frames_path}")
+
+    plan_path = output_path / "enhanced_prompt.json"
+    with plan_path.open("w", encoding="utf-8") as file:
+        json.dump(plan, file, indent=2)
+        file.write("\n")
+
+    archive_path = output_path / "keyframe_storyboard.zip"
+    with zipfile.ZipFile(archive_path, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.write(plan_path, plan_path.name)
+        for frame_path in sorted(frames_path.rglob("*")):
+            if frame_path.is_file():
+                archive.write(frame_path, frame_path.relative_to(output_path))
+    return str(archive_path)
+
+
+def upload_named_job_artifact(
+    local_file_path: str,
+    job_id: str,
+    gcs_config: GCSConfig,
+    artifact_name: str,
+    cleanup_local: bool = False,
+) -> Optional[str]:
+    """Upload a non-video job artifact under an explicit filename."""
+    uploader = create_worker_uploader(gcs_config)
+    if not uploader:
+        return None
+    return uploader.upload_additional_artifact(
+        local_file_path=local_file_path,
+        job_id=job_id,
+        artifact_name=artifact_name,
+        cleanup_local=cleanup_local,
     )

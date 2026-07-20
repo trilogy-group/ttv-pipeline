@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+from io import BytesIO
 
 from PIL import Image
 
@@ -9,7 +10,9 @@ def test_gemini_keyframe_generation_uses_google_genai_client(tmp_path, monkeypat
     input_path = tmp_path / "input.png"
     output_path = tmp_path / "output.png"
     Image.new("RGB", (2, 2), color="blue").save(input_path)
-    generated_bytes = input_path.read_bytes()
+    generated_image = BytesIO()
+    Image.new("RGB", (3, 2), color="green").save(generated_image, format="JPEG")
+    generated_bytes = generated_image.getvalue()
 
     generate_content_calls = []
     clients = []
@@ -43,7 +46,9 @@ def test_gemini_keyframe_generation_uses_google_genai_client(tmp_path, monkeypat
     )
 
     assert result == str(output_path.resolve())
-    assert output_path.read_bytes() == generated_bytes
+    with Image.open(output_path) as image:
+        assert image.format == "PNG"
+        assert image.size == (2, 2)
     assert generate_content_calls[0]["model"] == "test-image-model"
     assert generate_content_calls[0]["config"].response_modalities == ["IMAGE"]
     assert generate_content_calls[0]["contents"][-1] == "Turn the square green"

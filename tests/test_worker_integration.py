@@ -74,8 +74,8 @@ class TestPipelineIntegration:
 
             with open(os.path.join(frames_dir, "segment_00.png"), "rb") as file:
                 assert file.read() == b"start"
-            assert video_prompts[0]["first_frame"] == os.path.join(frames_dir, "segment_00.png")
-            assert video_prompts[1]["last_frame"] == os.path.join(frames_dir, "segment_02.png")
+            assert video_prompts[0]["first_frame"] == "provided_start_image.png"
+            assert video_prompts[1]["last_frame"] == "segment_02.png"
 
     def test_prepare_keyframes_keeps_start_already_named_segment_zero(self):
         with tempfile.TemporaryDirectory() as output_dir:
@@ -100,7 +100,7 @@ class TestPipelineIntegration:
 
             with open(initial_image, "rb") as file:
                 assert file.read() == b"start"
-            assert video_prompts[0]["first_frame"] == initial_image
+            assert video_prompts[0]["first_frame"] == "provided_start_image.png"
 
     def test_single_keyframe_generation_uses_typed_error_fallback(self):
         with tempfile.TemporaryDirectory() as output_dir:
@@ -120,7 +120,7 @@ class TestPipelineIntegration:
 
             get_fallback.assert_called_once_with("primary", config)
             fallback.generate_video.assert_called_once()
-            assert result == [os.path.join(output_dir, "segment_001.mp4")]
+            assert result == [os.path.join(output_dir, "videos", "segment_001.mp4")]
 
     def test_single_keyframe_generation_falls_back_when_backend_init_fails(self):
         with tempfile.TemporaryDirectory() as output_dir:
@@ -136,7 +136,7 @@ class TestPipelineIntegration:
                  patch("generators.factory.get_fallback_generator", return_value=fallback):
                 result = generate_video_segments_single_keyframe(config, prompts, output_dir)
 
-            expected_path = os.path.join(output_dir, "segment_001.mp4")
+            expected_path = os.path.join(output_dir, "videos", "segment_001.mp4")
             assert fallback.generate_video.call_args.kwargs["output_path"] == expected_path
             assert result == [expected_path]
 
@@ -256,7 +256,8 @@ class TestPipelineIntegration:
         mock_generate_segments.assert_called_once_with(
             config=config,
             video_prompts=video_prompts,
-            output_dir='/tmp/test'
+            output_dir='/tmp/test',
+            cancellation_check=cancellation_token.is_cancelled,
         )
     
     @patch('workers.gcs_uploader.upload_job_artifact')

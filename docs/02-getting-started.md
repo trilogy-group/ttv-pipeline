@@ -98,7 +98,7 @@ The pipeline is configured through `pipeline_config.yaml`, which you must create
    - **Runway ML**: Set `runway_ml.api_key`
    - **Google Veo**: Set `google_veo.project_id` and `credentials_path`
    - **Minimax**: Set `minimax.api_key` or environment variable `MINIMAX_API_KEY`
-   - **fal.ai**: Set `fal.api_key` or environment variable `FAL_API_KEY`, and set `fal.model`
+   - **fal.ai**: Set `fal.api_key` or `FAL_KEY` (`FAL_API_KEY` is a compatibility fallback), and select a profiled `fal.model` endpoint
    - **Stability AI**: Set `stability_api_key`
 
 *Source: [`pipeline_config.yaml.sample`](../pipeline_config.yaml.sample)*

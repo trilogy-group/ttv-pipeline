@@ -343,9 +343,11 @@ class TestAuthTokenMiddleware:
 
         client = TestClient(app)
         response = client.get("/v1/jobs/test")
+        plan_response = client.get("/v1/plans/test")
 
         assert response.status_code == 401
         assert response.json()["error"] == "Unauthorized"
+        assert plan_response.status_code == 401
 
     def test_allows_request_with_valid_bearer_token(self):
         app = FastAPI()

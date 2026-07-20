@@ -28,6 +28,9 @@ from generators.base import (
 
 class MinimaxGenerator(VideoGeneratorInterface):
     """Remote video generator using Minimax API with I2V-01-Director model"""
+
+    DEFAULT_MAX_DURATION = 6
+    MAX_PROMPT_LENGTH = 500
     
     # Pricing per second (estimated based on typical I2V pricing)
     PRICING = {
@@ -45,7 +48,7 @@ class MinimaxGenerator(VideoGeneratorInterface):
         super().__init__(config)
         self.api_key = config.get("api_key")
         self.model = config.get("model", "I2V-01-Director")
-        self.max_duration = config.get("max_duration", 6)  # Minimax typical max
+        self.max_duration = config.get("max_duration", self.DEFAULT_MAX_DURATION)
         self.base_url = config.get("base_url", "https://api.minimaxi.chat/v1")
         self.max_retries = config.get("max_retries", 3)
         self.polling_interval = config.get("polling_interval", 30)  # Poll every 30 seconds
@@ -79,7 +82,7 @@ class MinimaxGenerator(VideoGeneratorInterface):
             "api_based": True,
             "supports_camera_movements": True,
             "camera_movements": self.CAMERA_MOVEMENTS,
-            "max_prompt_length": 500,
+            "max_prompt_length": self.MAX_PROMPT_LENGTH,
             "cost_per_second": self.PRICING.get(self.model, 0.02)
         }
     
@@ -98,8 +101,10 @@ class MinimaxGenerator(VideoGeneratorInterface):
         # Validate prompt
         if not prompt or len(prompt.strip()) == 0:
             errors.append("Prompt cannot be empty")
-        elif len(prompt) > 500:
-            errors.append("Prompt too long (max 500 characters for Minimax)")
+        elif len(prompt) > self.MAX_PROMPT_LENGTH:
+            errors.append(
+                f"Prompt too long (max {self.MAX_PROMPT_LENGTH} characters for Minimax)"
+            )
         
         # Validate image
         image_validation = ImageValidator.validate_image(input_image_path, max_size_mb=10.0)

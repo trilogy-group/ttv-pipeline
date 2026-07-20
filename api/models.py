@@ -4,8 +4,70 @@ Pydantic models for API request/response validation and job management.
 
 from datetime import datetime, timezone
 from enum import Enum
+from pathlib import PurePosixPath, PureWindowsPath
 from typing import Optional, List, Dict, Any
-from pydantic import BaseModel, Field, StrictInt, field_validator
+from pydantic import BaseModel, Field, StrictInt, field_validator, model_validator
+
+
+class SegmentationLogic(BaseModel):
+    total_duration_seconds: int
+    number_of_segments: int
+    reasoning: str
+
+
+class ShotTransition(str, Enum):
+    CUT = "cut"
+    CONTINUE = "continue"
+
+
+class KeyframePrompt(BaseModel):
+    segment: int
+    prompt: str
+    transition: ShotTransition = ShotTransition.CONTINUE
+    start_prompt: Optional[str] = None
+
+    @model_validator(mode="after")
+    def require_cut_start_prompt(self):
+        if self.transition == ShotTransition.CUT and not self.start_prompt:
+            raise ValueError("cut keyframes require start_prompt")
+        return self
+
+
+class VideoPrompt(BaseModel):
+    segment: int
+    prompt: str
+    first_frame: Optional[str] = None
+    last_frame: Optional[str] = None
+    duration_seconds: int
+
+    @field_validator("first_frame", "last_frame")
+    @classmethod
+    def require_frame_filename(cls, value: Optional[str]) -> Optional[str]:
+        paths = (PurePosixPath(value), PureWindowsPath(value)) if value else ()
+        if any(path.name != value for path in paths):
+            raise ValueError("Frame references must be filenames, not paths")
+        return value
+
+
+class PromptEnhancementResult(BaseModel):
+    segmentation_logic: SegmentationLogic
+    keyframe_prompts: List[KeyframePrompt]
+    video_prompts: List[VideoPrompt]
+
+
+class PlanCreateRequest(BaseModel):
+    """Request prompt decomposition without starting paid media generation."""
+
+    prompt: str = Field(..., min_length=1, max_length=100_000)
+    duration_seconds: Optional[StrictInt] = Field(None, gt=0, le=14_440)
+
+    @field_validator("prompt")
+    @classmethod
+    def normalize_prompt(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("Prompt cannot be empty or only whitespace")
+        return value
 
 
 class JobStatus(str, Enum):
@@ -20,8 +82,8 @@ class JobStatus(str, Enum):
 
 class JobCreateRequest(BaseModel):
     """Request model for job creation"""
-    prompt: str = Field(
-        ...,
+    prompt: Optional[str] = Field(
+        None,
         min_length=1,
         max_length=2000,
         description="Text prompt for video generation"
@@ -32,15 +94,31 @@ class JobCreateRequest(BaseModel):
         le=14_440,
         description="Requested final runtime in seconds (currently supported by Veo 3)",
     )
+    enhanced_prompt: Optional[PromptEnhancementResult] = Field(
+        None,
+        description="Reviewed prompt plan returned by POST /v1/plans",
+    )
+    keyframes_only: bool = Field(
+        False,
+        description="Generate and return a keyframe storyboard without video generation",
+    )
     
     @field_validator('prompt')
     @classmethod
     def validate_prompt(cls, v):
+        if v is None:
+            return v
         # Remove excessive whitespace
         v = ' '.join(v.split())
         if not v.strip():
             raise ValueError('Prompt cannot be empty or only whitespace')
         return v
+
+    @model_validator(mode="after")
+    def require_prompt_or_plan(self):
+        if self.prompt is None and self.enhanced_prompt is None:
+            raise ValueError("Either prompt or enhanced_prompt is required")
+        return self
 
 
 class JobCreateResponse(BaseModel):
@@ -59,7 +137,9 @@ class JobStatusResponse(BaseModel):
     created_at: datetime = Field(..., description="Job creation timestamp")
     started_at: Optional[datetime] = Field(None, description="Job start timestamp")
     finished_at: Optional[datetime] = Field(None, description="Job completion timestamp")
-    gcs_uri: Optional[str] = Field(None, description="GCS URI of generated video (when finished)")
+    gcs_uri: Optional[str] = Field(
+        None, description="GCS URI of the generated video or storyboard artifact"
+    )
     error: Optional[str] = Field(None, description="Error message (when failed)")
 
 

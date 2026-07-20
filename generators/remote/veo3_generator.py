@@ -46,29 +46,48 @@ from generators.base import (
 class Veo3Generator(VideoGeneratorInterface):
     """Remote video generator using Google Veo 3 API"""
     
-    # Model name for Veo 3
+    # Vertex AI and Gemini Developer API model names.
     MODEL_NAME = "veo-3.1-generate-001"
+    FAST_MODEL_NAME = "veo-3.1-fast-generate-001"
+    API_MODEL_NAME = "veo-3.1-generate-preview"
+    API_FAST_MODEL_NAME = "veo-3.1-fast-generate-preview"
     SUPPORTED_DURATIONS = [4, 6, 8]
     
-    # Pricing estimates (placeholder values - actual pricing TBD)
     PRICING = {
-        "veo-3.1-generate-001": 0.75,
+        "veo-3.1-generate-001": 0.50,
+        "veo-3.1-fast-generate-001": 0.50,
+        "veo-3.1-generate-preview": 0.40,
+        "veo-3.1-fast-generate-preview": 0.10,
+        "veo-3.1-lite-generate-preview": 0.05,
     }
     
     def __init__(self, config: Dict[str, Any]):
         super().__init__(config)
+        self.api_key = config.get("api_key")
         self.project_id = config.get("project_id")
         self.region = config.get("region", "global")  # Veo 3 is available in global region
         self.credentials_path = config.get("credentials_path", "credentials.json")
         self.output_bucket = config.get("output_bucket")
         self.max_retries = config.get("max_retries", 3)
         self.timeout = config.get("timeout", 600)
-        self.model_name = config.get("veo_model", self.MODEL_NAME)  # Use config model or fallback to default
+        configured_model = config.get("veo_model")
+        if self.api_key and configured_model:
+            configured_model = {
+                self.MODEL_NAME: self.API_MODEL_NAME,
+                self.FAST_MODEL_NAME: self.API_FAST_MODEL_NAME,
+            }.get(configured_model, configured_model)
+            if configured_model not in {self.API_MODEL_NAME, self.API_FAST_MODEL_NAME}:
+                raise VideoGenerationError(
+                    f"Unsupported Gemini API Veo model: {configured_model}"
+                )
+        self.model_name = configured_model or (
+            self.API_MODEL_NAME if self.api_key else self.MODEL_NAME
+        )
         
-        if not self.project_id:
-            raise VideoGenerationError("Google Cloud project ID is required")
+        if not self.api_key and not self.project_id:
+            raise VideoGenerationError("Google API key or Google Cloud project ID is required")
         
-        if not self.output_bucket:
+        if not self.api_key and not self.output_bucket:
             self.output_bucket = f"{self.project_id}-veo3-outputs"
             self.logger.info(f"No output bucket specified, using default: {self.output_bucket}")
         
@@ -81,6 +100,12 @@ class Veo3Generator(VideoGeneratorInterface):
     def _init_clients(self):
         """Initialize Google Cloud clients"""
         try:
+            if self.api_key:
+                self.genai_client = genai.Client(api_key=self.api_key)
+                self.storage_client = None
+                self.logger.info("Gemini Developer API client initialized successfully")
+                return
+
             # Set environment variables for Google Gen AI SDK
             os.environ["GOOGLE_CLOUD_PROJECT"] = self.project_id
             os.environ["GOOGLE_CLOUD_LOCATION"] = self.region
@@ -131,18 +156,8 @@ class Veo3Generator(VideoGeneratorInterface):
     
     def estimate_cost(self, duration: float, resolution: str = "1920x1080") -> float:
         """Estimate cost for video generation"""
-        # Get price per second for the model
         price_per_second = self.PRICING.get(self.model_name, 0.10)
-        
-        # Resolution multiplier
-        resolution_multipliers = {
-            "1024x1024": 1.0,
-            "1920x1080": 1.2,
-            "1080x1920": 1.2
-        }
-        multiplier = resolution_multipliers.get(resolution, 1.0)
-        
-        return duration * price_per_second * multiplier
+        return duration * price_per_second
     
     def validate_inputs(self, 
                        prompt: str, 
@@ -175,7 +190,10 @@ class Veo3Generator(VideoGeneratorInterface):
                             f"Recommended: 16:9, 9:16, or 1:1")
         
         # Validate duration
-        if duration not in self.SUPPORTED_DURATIONS:
+        resolution = self.config.get("resolution", "720p")
+        if resolution in {"1080p", "4k"} and duration != 8:
+            errors.append(f"{resolution} Veo generation requires an 8-second duration")
+        elif duration not in self.SUPPORTED_DURATIONS:
             errors.append(f"Duration must be one of {self.SUPPORTED_DURATIONS} seconds")
         
         return errors
@@ -230,16 +248,10 @@ class Veo3Generator(VideoGeneratorInterface):
         self.logger.info(f"Using video aspect ratio: {video_aspect_ratio}")
         
         try:
-            # Create a unique output GCS URI for this generation
-            output_gcs_uri = self._create_output_gcs_uri()
-            
-            # Ensure the output bucket exists
-            self._ensure_bucket_exists(self.output_bucket)
-            
             def request_image(path):
                 mime_type, _ = mimetypes.guess_type(path)
                 mime_type = mime_type or "image/jpeg"
-                if kwargs.get("use_local_file", False):
+                if self.api_key or kwargs.get("use_local_file", False):
                     return GenAIImage.from_file(location=path, mime_type=mime_type)
                 return GenAIImage(gcs_uri=self._upload_to_gcs(path), mime_type=mime_type)
 
@@ -250,24 +262,41 @@ class Veo3Generator(VideoGeneratorInterface):
             self.logger.info(f"Submitting video generation request to {self.model_name}...")
             
             # Create the configuration
-            config = GenerateVideosConfig(
-                aspect_ratio=video_aspect_ratio,
-                duration_seconds=int(duration),
-                last_frame=last_frame,
-                output_gcs_uri=output_gcs_uri,
-            )
+            config_args = {
+                "aspect_ratio": video_aspect_ratio,
+                "duration_seconds": int(duration),
+                "last_frame": last_frame,
+            }
+            if self.api_key:
+                config_args.update(
+                    resolution=self.config.get("resolution", "720p"),
+                    person_generation="allow_adult",
+                )
+            else:
+                output_gcs_uri = self._create_output_gcs_uri()
+                self._ensure_bucket_exists(self.output_bucket)
+                config_args["output_gcs_uri"] = output_gcs_uri
+            config = GenerateVideosConfig(**config_args)
             
             # Use the asynchronous API call and wait for completion
             progress_monitor = ProgressMonitor(100)
             progress_monitor.update(0, "Submitting video generation request...")
             
-            operation = self.retry_handler.retry_with_backoff(
-                self.genai_client.models.generate_videos,
-                model=self.model_name,
-                image=image,
-                prompt=prompt,
-                config=config
-            )
+            request_args = {
+                "model": self.model_name,
+                "image": image,
+                "prompt": prompt,
+                "config": config,
+            }
+            if self.api_key:
+                # The Developer API reports invalid model/parameter combinations as
+                # HTTP 400. Repeating the same paid-generation request cannot recover.
+                operation = self.genai_client.models.generate_videos(**request_args)
+            else:
+                operation = self.retry_handler.retry_with_backoff(
+                    self.genai_client.models.generate_videos,
+                    **request_args,
+                )
             
             # Poll the operation until completion
             start_time = time.time()
@@ -282,8 +311,15 @@ class Veo3Generator(VideoGeneratorInterface):
             self.logger.info(f"Video generation completed in {format_duration(elapsed)}")
             progress_monitor.update(100, "Video generation complete")
             
-            # Extract the video URI from the operation result
-            if operation.response and hasattr(operation.result, 'generated_videos') and operation.result.generated_videos:
+            response = operation.response
+            if self.api_key and response and response.generated_videos:
+                video = response.generated_videos[0].video
+                self.genai_client.files.download(file=video)
+                video.save(output_path)
+                return output_path
+
+            # Extract the Vertex output URI from the operation result.
+            if response and hasattr(operation.result, 'generated_videos') and operation.result.generated_videos:
                 video_uri = operation.result.generated_videos[0].video.uri
                 if video_uri:
                     self.logger.info(f"Video generated successfully: {video_uri}")
@@ -402,7 +438,7 @@ class Veo3Generator(VideoGeneratorInterface):
         """Check if Veo 3 API is available"""
         try:
             # Check if credentials are valid and we have basic requirements
-            if not self.project_id:
+            if not self.api_key and not self.project_id:
                 return False
             
             # Simple connectivity check - just verify we can access the client

@@ -91,15 +91,28 @@ minimax:
 
 # Remote API configuration - fal.ai
 fal:
-  api_key: "YOUR_FAL_API_KEY"                 # Required unless FAL_API_KEY env var is set
-  model: "fal-ai/minimax/hailuo-02/standard/image-to-video"  # Any fal model endpoint ID
-  base_url: "https://fal.run"                 # fal synchronous endpoint base URL
-  max_duration: 10                             # Per-request duration cap enforced by this pipeline
-  default_input: {}                            # Optional model-specific default input fields
+  api_key: "YOUR_FAL_KEY"                     # Required unless FAL_KEY is set; FAL_API_KEY remains a compatibility fallback
+  model: "bytedance/seedance-2.0/image-to-video"
+  base_url: "https://queue.fal.run"
+  queue_start_timeout: 300                     # Maximum queue wait before fal starts processing
+  default_input:                               # Only documented fields for the selected profile are accepted
+    resolution: "720p"
+    aspect_ratio: "16:9"
+# Supported profiles:
+# - bytedance/seedance-2.0/image-to-video
+# - bytedance/seedance-2.0/fast/image-to-video
+# - fal-ai/veo3.1/image-to-video
+# - fal-ai/veo3.1/first-last-frame-to-video
+# - fal-ai/veo3.1/fast/image-to-video
+# - fal-ai/veo3.1/fast/first-last-frame-to-video
+# - fal-ai/minimax/hailuo-02/standard/image-to-video
+# - fal-ai/minimax/video-01/image-to-video
 
 # Remote API settings (applies to all API backends)
 remote_api_settings:
   max_retries: 3            # Maximum retry attempts
+  polling_interval: 5       # Queue status polling interval in seconds
+  http_timeout: 30          # Timeout for each queue API read
   timeout: 600              # Maximum wait time in seconds
   # fallback_backend: "wan2.1" # Fallback if primary API fails (comment out to disable fallback)
 
@@ -169,7 +182,7 @@ video_aspect_ratio: "16:9"  # Default to widescreen landscape
 
 # Video generation parameters (applies to all backends)
 segment_duration_seconds: 5.0 # Desired duration for each video segment in seconds
-# duration_seconds: 15        # Optional requested final runtime (max 14440s); Veo plans 4/6/8s clips and trims only if needed
+# duration_seconds: 15        # Optional requested final runtime (max 14440s); Veo/fal use profiled clip lengths and trim only if needed
 frame_num: 81         # Number of frames (for ~5 seconds at 16fps)
 sample_steps: 40      # Sampling steps
 sample_shift: 5.0     # Sampling shift factor

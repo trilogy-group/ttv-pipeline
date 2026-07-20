@@ -28,25 +28,27 @@ The remote API generators implement the `VideoGeneratorInterface` to provide vid
 
 ### Provider/Model Separation
 
-The `FalGenerator` treats `fal.ai` as the provider and `fal.model` as the runtime model endpoint, so one backend can target any fal-supported video model.
+The `FalGenerator` treats `fal.ai` as the provider and requires `fal.model` to match a tested endpoint profile. Profiles define exact frame fields, clip lengths, options, and output parsing instead of guessing a shared schema.
 
 **Configuration highlights:**
 - `default_backend`: `"fal"` or `"fal.ai"`
-- `fal.model`: full model endpoint identifier (required)
-- `fal.api_key` or environment variable `FAL_API_KEY`
-- `fal.default_input`: optional model-specific input defaults merged into each request
+- `fal.model`: one of the supported endpoint identifiers listed below
+- `fal.api_key` or environment variable `FAL_KEY` (legacy `FAL_API_KEY` also works)
+- `fal.default_input`: optional documented profile fields; unknown fields are rejected
+- `fal.queue_start_timeout`: server-side deadline for starting work
 
-### Header Metrics Capture
+Supported endpoint profiles:
 
-When fal response headers are present, the generator captures metrics such as:
-- `x-fal-request-id`
-- `x-compute-time`
-- `x-queue-time`
-- `x-total-cost`
-- `x-request-cost`
-- `x-generation-time`
+- `bytedance/seedance-2.0/image-to-video`
+- `bytedance/seedance-2.0/fast/image-to-video`
+- `fal-ai/veo3.1/image-to-video`
+- `fal-ai/veo3.1/first-last-frame-to-video`
+- `fal-ai/veo3.1/fast/image-to-video`
+- `fal-ai/veo3.1/fast/first-last-frame-to-video`
+- `fal-ai/minimax/hailuo-02/standard/image-to-video`
+- `fal-ai/minimax/video-01/image-to-video`
 
-Metrics are written next to the generated file as `<output>.metrics.json`.
+fal requests use `queue.fal.run`: submit once, poll safe lifecycle reads with bounded backoff, retrieve the documented `video.url`, and attempt cancellation on a local timeout. `generator.last_request_metadata` retains request and endpoint identity plus ephemeral queue/output metadata for future reconciliation. It is not persisted to a sidecar.
 
 ## Architecture Overview
 
@@ -506,11 +508,13 @@ minimax:
 **fal.ai Configuration:**
 ```yaml
 fal:
-  api_key: "YOUR_FAL_API_KEY"
-  model: "fal-ai/minimax/hailuo-02/standard/image-to-video"
-  base_url: "https://fal.run"
-  max_duration: 10
-  default_input: {}
+  api_key: "YOUR_FAL_KEY"
+  model: "bytedance/seedance-2.0/image-to-video"
+  base_url: "https://queue.fal.run"
+  queue_start_timeout: 300
+  default_input:
+    resolution: "720p"
+    aspect_ratio: "16:9"
 ```
 
 *Sources: [`generators/remote/runway_generator.py`](../generators/remote/runway_generator.py) (lines 39-56), [`generators/remote/veo3_generator.py`](../generators/remote/veo3_generator.py) (lines 66-82), [`generators/remote/minimax_generator.py`](../generators/remote/minimax_generator.py) (lines 66-82)*
@@ -532,7 +536,8 @@ Both generators support environment variable authentication as fallbacks:
 - **`MINIMAX_API_KEY`**: Minimax API authentication key
 
 **fal.ai Environment Variables:**
-- **`FAL_API_KEY`**: fal.ai API authentication key
+- **`FAL_KEY`**: preferred fal.ai API authentication key
+- **`FAL_API_KEY`**: compatibility fallback
 
 **Environment Variable Priority:**
 1. Configuration file values
@@ -699,8 +704,8 @@ except Exception as e:
 ```python
 config = {
     "api_key": "your_fal_api_key",
-    "model": "fal-ai/minimax/hailuo-02/standard/image-to-video",
-    "base_url": "https://fal.run",
+    "model": "bytedance/seedance-2.0/image-to-video",
+    "base_url": "https://queue.fal.run",
     "timeout": 600,
 }
 
@@ -711,12 +716,11 @@ video_path = generator.generate_video(
     prompt="A cinematic drone shot over neon city streets",
     input_image_path="input.jpg",
     output_path="output.mp4",
-    duration=5.0,
+    duration=12,
 )
 
-# Header metrics (when present) are available in:
-# - generator.last_request_metrics
-# - output.mp4.metrics.json
+# Ephemeral queue and output metadata is available in:
+# generator.last_request_metadata
 ```
 
 ---

@@ -1,7 +1,7 @@
 # TTV Pipeline Recovery and Product Roadmap
 
-Status: Phase 2 complete; Phase 3 pending
-Last updated: 2026-07-18
+Status: Phase 3 complete; Phase 4 pending
+Last updated: 2026-07-19
 Workspace: `/Users/magos/dev/kumanday/Parlina/ttv-pipeline`
 
 ## Purpose
@@ -37,6 +37,13 @@ compaction or a new Codex session.
   Veo request schema.
 - Treat user-facing `duration_seconds` as the requested final runtime. Keep
   provider clip duration as a separate internal concept.
+- Treat a narrative scene, its timed beats or shots, and a provider-generated
+  take as separate concepts. A longer generation may contain several shots, and
+  a longer scene may still require several generations.
+- Treat provider reference limits as budgets, not targets. Build a curated,
+  versioned reference pack for each scene from reusable project assets.
+- Keep audio references, independent audio timelines, splicing, muxing, and the
+  final mix in a separate phase from visual scene preparation and assembly.
 - Start frontend validation with a same-origin, zero-build UI. Add a frontend
   framework only when the proven workflow needs it.
 
@@ -271,54 +278,332 @@ Phase 2 validation:
   baseline failures for obsolete routes/fixtures and live readiness dependencies;
   no Phase 2 code path is implicated.
 
-## Phase 3 - Correct fal.ai support
+## Phase 3 - Make fal.ai a first-class provider
 
-Status: pending
+Status: complete
+Priority: next product phase
+Execution: one bounded feature PR; split only if a model requires a materially
+different asset workflow
 
-Goal: keep fal as a useful provider without pretending every model shares one
-schema.
+Goal: make fal a reliable provider with explicit contracts for the video models
+the product uses, especially Seedance, without pretending every fal endpoint
+shares one input schema.
 
-Required work:
+### Current assessment
 
-- Fix the configured Hailuo path: it accepts 6 or 10 seconds, while the pipeline
-  currently sends 5.
-- Correct capability claims; the current adapter requires an image despite
-  advertising text-to-video.
-- Add request-payload assertions to tests.
-- Support only concrete model schemas needed by the product. Do not build a
-  universal adapter speculatively.
+- The current adapter sends one generic synchronous payload directly to
+  `fal.run`. It does not use fal's recommended durable queue lifecycle.
+- It retries every exception around the entire generation call. This can retry
+  authentication and validation failures and can resubmit an ambiguously
+  accepted paid job.
+- It always requires an input image while advertising text-to-video support.
+- It injects numeric `duration` and `image_url` fields into every endpoint even
+  though model field names, encodings, and allowed values differ.
+- The configured Hailuo-02 endpoint accepts 6 or 10 seconds, but the pipeline can
+  send 5.
+- Response parsing recursively accepts the first URL in any field instead of the
+  documented `video.url` output.
+- The current cost/timing header list is partly speculative. fal documents
+  request identity, billable units, queue metrics, and separate Platform APIs
+  that are better foundations for later usage analysis.
 
-## Phase 4 - Durable staged project/storyboard API
+### Design decisions
+
+- Keep one fal provider transport and a small table of concrete model profiles.
+  A profile owns its endpoint, supported generation mode, required assets,
+  duration contract, payload mapping, capability claims, and output mapping.
+- Continue accepting an exact `fal.model` endpoint ID, but require it to match a
+  tested profile. Fail configuration validation for unprofiled endpoints instead
+  of guessing their capabilities or payload fields.
+- Use fal's queue REST API through the already-installed `requests` dependency;
+  do not add `fal-client` unless the REST surface proves insufficient. Submit
+  once, retain the returned request and lifecycle URLs, poll status, retrieve the
+  result, and cancel on a local deadline where possible.
+- Keep this phase image-driven because that is the pipeline's current generation
+  contract. Do not advertise text-to-video, reference-to-video, extension, or
+  video editing until the pipeline exposes and tests those input roles. The
+  Seedance reference-to-video vertical slice follows the scene/reference domain
+  work in Phase 4 rather than expanding this provider-transport PR.
+- Parse the documented `video.url` result only. Preserve `video.content_type`,
+  `video.file_name`, `video.file_size`, and returned `seed` when present as
+  ephemeral provider metadata.
+- Make `FAL_KEY` the documented environment variable while retaining
+  `FAL_API_KEY` as a compatibility fallback.
+- Disable fal's implicit equivalent-model fallback for profiled requests so the
+  selected model, price, and capabilities remain deterministic; send
+  `x-app-fal-disable-fallback: true` and continue using the pipeline's explicit
+  provider fallback.
+- Disable remote input/output payload retention by default because requests can
+  contain prompts and base64 keyframes. Send `X-Fal-Store-IO: 0`; this does not
+  prevent later usage and billing reconciliation.
+- Make the existing requested-duration planner consume the selected profile's
+  allowed or fixed clip lengths instead of treating fal as one scalar maximum.
+
+### Initial first-class model profiles
+
+1. **Seedance 2.0 - priority vertical slice**
+   - Support `bytedance/seedance-2.0/image-to-video` and
+     `bytedance/seedance-2.0/fast/image-to-video`.
+   - Map the starting keyframe to `image_url` and the optional ending keyframe to
+     `end_image_url`.
+   - Accept integer durations from 4 through 15 seconds or `auto` when the user
+     did not request a runtime.
+   - Validate endpoint-specific resolution limits, aspect ratio, and image size
+     before submission.
+2. **Veo 3.1 through fal**
+   - Support `fal-ai/veo3.1/image-to-video` and
+     `fal-ai/veo3.1/first-last-frame-to-video`, including their fast variants
+     after confirming the live schemas are identical.
+   - Select the endpoint from the available keyframes instead of sending a last
+     frame to an image-only schema.
+   - Encode durations as `4s`, `6s`, or `8s` and map frames to `image_url` or
+     `first_frame_url` plus `last_frame_url` as required.
+3. **Hailuo-02 through fal**
+   - Correct the currently configured
+     `fal-ai/minimax/hailuo-02/standard/image-to-video` path.
+   - Encode duration as 6 or 10 seconds and map the optional ending keyframe to
+     `end_image_url`.
+   - Keep resolution constraints in the profile rather than a provider-wide
+     scalar maximum.
+4. **MiniMax Video-01 through fal**
+   - Support `fal-ai/minimax/video-01/image-to-video` with its documented
+     `prompt`, `image_url`, and `prompt_optimizer` schema.
+   - Treat it as a fixed six-second profile; reject incompatible requested clip
+     lengths rather than sending an unsupported duration field.
+   - Do not copy Hailuo duration or ending-frame fields into this older endpoint.
+
+Additional model variants should be one profile plus payload-contract tests, not
+new provider classes. The Hailuo and MiniMax names overlap in fal's catalog, so
+endpoint IDs are the authoritative identity.
+
+### Audio boundary
+
+- A profiled endpoint may return a video file that already contains model-native
+  audio. Phase 3 transports that file as one opaque video artifact; it does not
+  extract, replace, align, mix, or independently version its audio.
+- Do not add user-facing audio generation switches or audio reference inputs in
+  this phase. Record their presence in a released provider schema only so Phase
+  7 can make an explicit product decision later.
+- Narrative prompt text may still describe dialogue, ambience, or sound when a
+  model understands it. That does not create an audio timeline or editing
+  contract in the pipeline.
+
+### Queue, rate-limit, and retry behavior
+
+- Submit to `queue.fal.run` and retain `request_id`, `status_url`, `response_url`,
+  and `cancel_url` before polling.
+- Treat 400, 401, 403, 404, and model-validation 422 responses as non-retryable.
+- Detect 429 responses plus `X-Fal-Needs-Retry` and `X-Fal-Error-Type`. Honor
+  `Retry-After` when supplied; otherwise use capped exponential backoff with
+  jitter.
+- Retry only safe status/result reads and explicitly rejected submissions. Never
+  blindly repeat a submission after an ambiguous network failure or after a
+  `request_id` has been received.
+- Rely on fal's queue to retry accepted jobs for 429 concurrency limits, 503/504
+  failures, and runner connection errors. Do not wrap the entire queued job in
+  the generic local retry handler.
+- Bound queue-start time separately from the worker's total deadline. On local
+  timeout or cancellation, call fal's cancel URL and report that in-progress
+  cancellation is best-effort.
+- Surface fal's machine-readable `error_type` and model validation details in the
+  existing generator exception hierarchy without logging credentials or full
+  base64 inputs.
+
+### Seedance 2.5 release readiness
+
+As of 2026-07-19, fal describes Seedance 2.5 as announced but not released and
+says ByteDance has not published its full specification. Do not ship a guessed
+fal endpoint or payload.
+
+Release checklist:
+
+1. Confirm the endpoint ID and schema from the live fal model API page.
+2. Diff the released schema against the Seedance 2.0 profile.
+3. Add the smallest new profile, exact capability data, and mocked payload tests.
+4. Verify duration, reference limits, resolution, output format, cost units, and
+   whether the output contains native audio against fal's published values.
+5. Run one explicitly authorized paid smoke request before making 2.5 selectable
+   by default.
+
+The linked MuAPI-oriented community repository is a useful provisional watchlist,
+not an API contract. Recheck candidate fields such as `duration`, `resolution` or
+`ratio`, `output_format`, `bitrate_mode`, `camera_fixed`, `return_last_frame`,
+role-tagged reference assets, and `seed` only after fal publishes its own schema.
+Recheck `generate_audio` and audio-reference fields as inputs to the separate
+Phase 7 design rather than adding them to visual preparation opportunistically.
+
+### Observability and cost discovery, without metrics capture
+
+- Retain the fal `request_id` and exact `endpoint_id` because the queue lifecycle
+  needs them and a later metrics job can use them as reconciliation keys.
+- Document the future event fields now: submitted, processing-started, completed,
+  and downloaded timestamps; final status and `error_type`; queue
+  `metrics.inference_time`; and `X-Fal-Billable-Units`. Do not add a metrics
+  record, sidecar, or persistence path in this phase.
+- Identify but do not yet ingest these Platform API surfaces:
+  - `GET /v1/models/pricing` and `POST /v1/models/pricing/estimate`;
+  - `GET /v1/models/billing-events`, keyed by `request_id`;
+  - `GET /v1/models/usage` and `GET /v1/models/analytics`;
+  - `GET /v1/models/requests/by-endpoint` for timing and failure reconciliation.
+- Defer a database schema, scheduled ingestion, dashboards, alerts, cost
+  attribution, and webhook processing to later phases. The durable staged API
+  can add signed, idempotent webhooks when jobs no longer need a blocking worker.
+
+### Required work
+
+- [x] Replace the direct synchronous call with queue submit/status/result/cancel.
+- [x] Add the four concrete model profiles above and correct capability claims.
+- [x] Route first and last keyframes and duration through the selected profile.
+- [x] Remove generic payload injection and recursive URL discovery for profiled
+      endpoints.
+- [x] Add rate-limit, safe-retry, deadline, cancellation, and typed-error handling.
+- [x] Preserve only queue-required request identity for later reconciliation;
+      stop treating speculative headers as cost records.
+- [x] Remove the current speculative metrics sidecar; metrics persistence remains
+      outside this phase.
+- [x] Update sample configuration and provider documentation with supported
+      endpoint IDs and their capabilities.
+- [x] Add mocked request-contract and queue-lifecycle tests.
+
+### Exit criteria
+
+- Seedance 2.0, fal Veo 3.1, Hailuo-02, and MiniMax Video-01 each produce the
+  documented payload for the keyframe inputs the profile claims to support.
+- Omitted duration preserves each model's automatic/default behavior; provided
+  duration is validated and encoded according to that model's contract.
+- Tests prove submit happens once, polling reaches completion, output uses
+  `video.url`, non-retryable errors fail immediately, retryable reads back off,
+  and timeout attempts cancellation.
+- Every generation exposes a fal request ID and endpoint ID for future billing
+  reconciliation without persisting prompts, images, API keys, or a new metrics
+  store.
+- Seedance 2.5 remains unavailable until the release checklist passes.
+
+Phase 3 validation:
+
+- `uv run pytest tests/test_fal_generator.py tests/test_veo31_duration.py -q`:
+  34 passed on Python 3.14.3.
+- `uv run ruff check generators/remote/fal_generator.py
+  tests/test_fal_generator.py`: passed.
+- `uv run mypy --follow-imports=skip generators/remote/fal_generator.py`: passed.
+- `uv run pytest -q`: 373 passed, 103 failed, 4 skipped. The failures reproduce
+  the existing unrelated baseline around absent Angie assets, legacy API test
+  fixtures without Redis/GCS readiness, and Trio compatibility; no fal or
+  requested-duration test failed.
+
+Sources reviewed 2026-07-19:
+
+- [fal asynchronous queue and lifecycle](https://fal.ai/docs/documentation/model-apis/inference/queue)
+- [fal reliability and automatic retries](https://fal.ai/docs/documentation/model-apis/inference/reliability)
+- [fal platform headers](https://fal.ai/docs/documentation/model-apis/common-parameters)
+- [fal pricing and Platform APIs](https://fal.ai/docs/documentation/model-apis/pricing)
+- [Seedance 2.0 image-to-video schema](https://fal.ai/models/bytedance/seedance-2.0/image-to-video/api)
+- [Seedance 2.0 reference-to-video schema](https://fal.ai/models/bytedance/seedance-2.0/reference-to-video)
+- [Seedance 2.0 technical report](https://arxiv.org/abs/2604.14148)
+- [Veo 3.1 first/last-frame schema](https://fal.ai/models/fal-ai/veo3.1/first-last-frame-to-video/api)
+- [Hailuo-02 image-to-video schema](https://fal.ai/models/fal-ai/minimax/hailuo-02/standard/image-to-video/api)
+- [MiniMax Video-01 image-to-video schema](https://fal.ai/models/fal-ai/minimax/video-01/image-to-video/api)
+- [fal's Seedance 2.5 prerelease note](https://fal.ai/learn/tools/what-is-seedance-2-5)
+- [community Seedance 2.5/MuAPI field watchlist](https://github.com/Anil-matcha/awesome-seedance-2.5-api-prompts)
+
+## Phase 4 - Durable scene preparation and storyboard API
 
 Status: pending
 Execution: OpenSymphony/spec-driven
 
-Goal: replace the monolithic ephemeral job with a resumable project workflow.
+Goal: replace the monolithic ephemeral job with a resumable visual workflow that
+can plan short clips or longer scene takes without equating a generated clip with
+a single shot.
+
+### Core vocabulary
+
+- **Scene:** a narrative unit with a purpose, requested duration, entry state,
+  exit state, and relationship to adjacent scenes.
+- **Beat or shot:** a timed visual event inside a scene. Several beats may be
+  generated together in one provider request.
+- **Reference pack:** the curated, versioned set of project assets used for one
+  scene take. Provider limits are maximums, not a reason to include every asset.
+- **Take:** one provider-generated scene output plus its immutable prompt,
+  reference-pack snapshot, model, request identity, and selected trim range.
+- **Transition contract:** the intended relationship between adjacent selected
+  takes, such as a hard cut, match cut, continuous action, or dissolve.
 
 Initial architecture:
 
 - Store a project/storyboard manifest in existing Redis.
-- Store keyframes and segment-video versions in existing GCS.
+- Store reusable visual assets, keyframes, and take versions in existing GCS.
 - Add a database only when retention or query requirements exceed Redis.
-- Keep final render/stitch operations as ordinary jobs.
+- Keep visual render, trim, and stitch operations as ordinary jobs.
+- Keep the current code's segment terminology until the domain specification
+  decides whether a migration is worth the churn.
 
 Stages/actions:
 
-1. Create project and generate storyboard.
-2. Edit or replan storyboard segments.
-3. Generate all keyframes.
-4. Regenerate or prompt-edit one keyframe.
-5. Approve keyframes individually or in one batch.
-6. Render or regenerate individual video segments.
-7. Select approved segment versions and stitch the final video.
+1. Create a project from the brief and requested final duration.
+2. Decompose the story into scenes, then give each scene a timed beat or shot
+   plan that covers its requested duration.
+3. Create a project visual-asset library and automatically propose a small
+   reference pack for each scene. Let the user change only the proposed roles or
+   exceptions.
+4. Generate optional entry, beat, or exit keyframes where the selected model
+   benefits from anchors; do not require a keyframe at every edit boundary.
+5. Approve the scene packet: scene intent, timed beats, reference pack, anchors,
+   continuity state, and transition intent.
+6. Render or regenerate scene takes and retain every version.
+7. Select a take and trim range for each scene, then stitch the visual timeline
+   according to the transition contracts.
 
 Required semantics:
 
-- Version prompts, keyframes, and video segments; do not silently overwrite.
-- Changing shared boundary keyframe `N` invalidates the segments on both sides
-  that consume it.
+- Version scene plans, prompts, reference packs, keyframes, and takes; do not
+  silently overwrite.
+- A reference role belongs to its use in a scene, not permanently to the asset.
+  The same image or video may serve different roles in different scenes.
+- Preserve asset provenance and rights notes, and snapshot the exact asset
+  versions used by each paid generation.
+- Keep an explicit scene continuity ledger for character condition and position,
+  wardrobe, props, location, time, weather, lighting, screen direction, camera
+  grammar, and unresolved action.
+- Do not force the prior take's last frame into every following scene. Use it for
+  continuous action; use shared references or deliberate composition for hard
+  and match cuts.
+- Changing a shared boundary keyframe invalidates the takes on both sides that
+  consume it.
 - Expose provider/model capabilities so unsupported UI actions are hidden.
 - Make each stage resumable and safe to retry without duplicating paid jobs.
+- Allocate requested final duration to scenes first and provider-compatible
+  takes second. Trimming remains an explicit selected-take operation.
+
+### Seedance multimodal vertical slice
+
+After the Phase 3 fal transport is complete, use the live
+`bytedance/seedance-2.0/reference-to-video` endpoint to validate this domain with
+one bounded image/video-reference flow before Seedance 2.5 is released:
+
+- Support typed image and video references and their prompt aliases.
+- Enforce the released Seedance 2.0 limits rather than adopting reported 2.5
+  limits early.
+- Store the immutable reference-pack snapshot with the take and expose the
+  provider request ID for later cost reconciliation.
+- Exclude audio references and independent audio controls; those belong to Phase
+  7 even though the provider endpoint supports them.
+
+### Explicit audio exclusion
+
+Scene preparation may retain dialogue or sound intent as ordinary prompt text,
+and previews may play audio already muxed into a provider result. This phase does
+not define audio assets or reference roles, multiple audio timelines, track
+selection, extraction, synchronization, splicing, crossfades, loudness handling,
+or final muxing. Phase 7 owns that work against the selected visual timeline.
+
+Exit criteria:
+
+- The manifest distinguishes scenes, timed beats, reference packs, and takes.
+- The workflow can approve a scene packet, generate multiple takes, select a trim,
+  and re-stitch without rerendering unaffected scenes.
+- A Seedance 2.0 request proves image/video reference mapping and immutable take
+  provenance through the real staged API contract.
+- No audio-timeline or muxing semantics leak into the scene-preparation domain.
 
 ## Phase 5 - Low-touch frontend
 
@@ -331,11 +616,18 @@ high-value review points.
 Suggested UX:
 
 1. Brief: prompt, requested duration, provider/model, aspect ratio.
-2. Storyboard: editable segment cards with a single accept-all path.
-3. Keyframes: generate all, then one gallery review gate with approve-all,
-   regenerate, and edit-with-instructions controls.
-4. Render: per-segment previews and exception-based retry/edit controls.
-5. Final stitch and playback.
+2. Storyboard: editable scene cards with timed beats and one accept-all path.
+3. References: automatically propose each scene's visual reference pack and show
+   only conflicts, missing roles, provenance warnings, or user-requested changes.
+4. Anchors: offer one gallery review gate for optional entry, beat, and exit
+   keyframes, with approve-all, regenerate, and edit-with-instructions controls.
+5. Render: show scene takes with exception-based retry/edit controls, trim
+   selection, and the intended transition to the next scene.
+6. Final visual stitch and playback.
+
+The primary review object is a scene packet, not an individual short segment.
+Audio already embedded in a provider preview may play, but this frontend phase
+does not expose track, splice, mix, or mux controls.
 
 Implementation order:
 
@@ -343,33 +635,84 @@ Implementation order:
 - Adopt React or another framework only after the staged workflow demonstrates
   that native UI state management is the constraint.
 
-## Phase 6 - Instruction-based video-to-video editing
+## Phase 6 - Scene revision, extension, and repair
 
 Status: pending
 Execution: provider spike first; OpenSymphony/spec-driven if retained
 
-Goal: regenerate an individual segment from its current video plus natural
-language instructions.
+Goal: revise an individual selected scene take without rerendering unrelated
+scenes.
 
 Approach:
 
 - Spike one concrete provider/model first; fal Kling O1 is the current candidate.
 - Do not force video editing through the image-to-video generator interface.
-- Keep original and edited segment versions.
-- Require review before an edit becomes the selected segment.
-- Re-stitch without rerendering unaffected segments.
+- Support the smallest useful operation exposed by the chosen model: regenerate
+  with instructions, replace the visual reference pack, extend the take, or edit
+  a temporal region.
+- Keep original and revised take versions plus their instruction deltas.
+- Require review before a revision becomes the selected take.
+- Re-stitch without rerendering unaffected scenes.
 - Generalize the provider contract only after a second implementation proves
   that schemas share useful structure.
+- Preserve provider-native audio opaquely with the video artifact; audio repair
+  and reassembly remain Phase 7 work.
+
+## Phase 7 - Audio timelines, splicing, and final mux
+
+Status: pending
+Execution: provider/audio spike first; OpenSymphony/spec-driven if retained
+
+Goal: add explicit audio semantics after the selected visual scene timeline is
+stable, without coupling audio architecture to scene-preparation work.
+
+Inputs from earlier phases:
+
+- Selected visual scene takes, trim ranges, and transition contracts.
+- Provider-native muxed audio where present, treated as an optional source.
+- Narrative dialogue, music, ambience, and sound-effect intent retained as text.
+
+Required work:
+
+- Decide when provider-native audio is retained, extracted, muted, or replaced.
+- Define separate dialogue, music, ambience, and sound-effect tracks or timelines
+  only where the product workflow demonstrates that they are needed.
+- Add audio reference assets and provider audio-reference routing here, including
+  provenance and rights metadata.
+- Define trim, splice, crossfade, synchronization, sample-rate/channel handling,
+  loudness policy, and deterministic final mux behavior.
+- Preserve audio source and mix versions so revising one scene or track does not
+  overwrite approved work.
+- Rebuild the final audio/video output without regenerating unaffected video.
+
+Non-goals:
+
+- Do not redesign scene decomposition, visual reference packs, keyframe review,
+  or video-provider transport in this phase.
+- Do not add a full digital-audio-workstation interface; expose only the controls
+  proven necessary by the selected workflow.
+
+Exit criteria:
+
+- The same selected visual timeline can be rendered with a deterministic,
+  versioned audio mix.
+- Scene trims and transitions produce synchronized audio edits without modifying
+  the underlying selected video takes.
+- Model-native audio and independently supplied tracks have explicit, testable
+  precedence rather than implicit ffmpeg behavior.
 
 ## Deferred specifications
 
 Create these only after the outline and relevant spike are approved:
 
-- Veo 3.1 and requested-duration implementation spec.
 - Durable project/storyboard domain and API spec.
+- Scene, beat, reference-pack, take, continuity, and transition semantics.
+- Visual reference asset provenance and versioning spec.
 - Artifact versioning and invalidation spec.
 - Full HITL frontend interaction spec.
-- Video-to-video editing spec, conditional on spike results.
+- Scene revision/extension/editing spec, conditional on spike results.
+- Audio timeline, splicing, and final-mux spec, kept independent from the visual
+  preparation specifications above.
 
 ## Execution log
 
@@ -384,3 +727,26 @@ Create these only after the outline and relevant spike are approved:
   `/Users/magos/.Trash/ttv-pipeline-phase0-2026-07-18`.
 - Moved TLS material under ignored `certs/`, secured Git/Docker exclusions,
   normalized runtime credential paths, and preserved required Compose config.
+
+### 2026-07-19
+
+- Re-scoped Phase 3 from a Hailuo payload fix into first-class fal provider work
+  with explicit Seedance 2.0, Veo 3.1, Hailuo-02, and MiniMax Video-01 profiles.
+- Selected fal's durable queue lifecycle and model-specific duration planning;
+  documented safe retry, rate-limit, cancellation, and error semantics.
+- Confirmed from fal's current prerelease note that Seedance 2.5 is not yet
+  released and recorded a release checklist instead of inventing a fal schema.
+- Identified request identity and Platform API reconciliation points for later
+  timing and cost analysis while keeping metrics capture out of Phase 3.
+- Reframed the future workflow around scenes, timed beats, curated visual
+  reference packs, versioned takes, continuity state, and transition contracts
+  so longer model outputs do not remain synonymous with shots.
+- Added a bounded Seedance 2.0 image/video-reference vertical slice after the fal
+  transport work, while keeping the unreleased Seedance 2.5 limits gated.
+- Isolated audio references, audio timelines, splicing, mixing, and final muxing
+  in Phase 7 so visual preparation and review phases remain modular.
+- Implemented the first-class fal provider on `feat/fal-first-class-provider`:
+  eight released endpoint IDs across four model families, queue lifecycle,
+  safe retry and cancellation, exact payload/output contracts, profiled duration
+  planning, ephemeral reconciliation metadata, updated configuration/docs, and
+  mocked contract/lifecycle coverage. Seedance 2.5 remains release-gated.
