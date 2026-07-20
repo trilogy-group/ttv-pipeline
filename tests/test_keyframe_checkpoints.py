@@ -9,7 +9,12 @@ from pydantic import ValidationError
 
 from api.models import KeyframePrompt
 from keyframe_generator import generate_keyframes_from_json
-from pipeline import run_pipeline, validate_existing_keyframes
+from pipeline import (
+    generate_single_video_segment,
+    generate_video_segments_sequential,
+    run_pipeline,
+    validate_existing_keyframes,
+)
 from workers.video_worker import CancellationToken, execute_pipeline_with_config
 from workers.gcs_uploader import create_keyframe_storyboard_archive
 
@@ -140,6 +145,39 @@ def test_reviewed_keyframes_require_matching_dimensions(tmp_path):
 
     with pytest.raises(ValueError, match="keyframe dimensions do not match"):
         validate_existing_keyframes(one_shot_plan()["video_prompts"], str(tmp_path))
+
+
+def test_local_generators_honor_explicit_cut_start_frame(tmp_path):
+    output_dir = tmp_path / "output"
+    frames_dir = output_dir / "frames"
+    frames_dir.mkdir(parents=True)
+    start = frames_dir / "segment_02_start.png"
+    end = frames_dir / "segment_02.png"
+    start.write_bytes(b"start")
+    end.write_bytes(b"end")
+    prompt = {
+        "segment": 2,
+        "prompt": "new scene",
+        "first_frame": start.name,
+        "last_frame": end.name,
+    }
+
+    with patch("pipeline.run_command") as run_command:
+        generate_single_video_segment(
+            "wan", {"total_gpus": 1}, prompt, str(output_dir), "model"
+        )
+        parallel_command = run_command.call_args.args[0]
+        assert parallel_command[parallel_command.index("--first_frame") + 1] == str(
+            start
+        )
+
+        generate_video_segments_sequential(
+            "wan", {"gpu_count": 1}, [prompt], str(output_dir), "model"
+        )
+        sequential_command = run_command.call_args.args[0]
+        assert sequential_command[sequential_command.index("--first_frame") + 1] == str(
+            start
+        )
 
 
 def test_api_worker_uploads_storyboard_and_skips_video_generation():

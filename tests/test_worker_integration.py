@@ -74,8 +74,8 @@ class TestPipelineIntegration:
 
             with open(os.path.join(frames_dir, "segment_00.png"), "rb") as file:
                 assert file.read() == b"start"
-            assert video_prompts[0]["first_frame"] == os.path.join(frames_dir, "segment_00.png")
-            assert video_prompts[1]["last_frame"] == os.path.join(frames_dir, "segment_02.png")
+            assert video_prompts[0]["first_frame"] == "provided_start_image.png"
+            assert video_prompts[1]["last_frame"] == "segment_02.png"
 
     def test_prepare_keyframes_keeps_start_already_named_segment_zero(self):
         with tempfile.TemporaryDirectory() as output_dir:
@@ -100,7 +100,7 @@ class TestPipelineIntegration:
 
             with open(initial_image, "rb") as file:
                 assert file.read() == b"start"
-            assert video_prompts[0]["first_frame"] == initial_image
+            assert video_prompts[0]["first_frame"] == "provided_start_image.png"
 
     def test_single_keyframe_generation_uses_typed_error_fallback(self):
         with tempfile.TemporaryDirectory() as output_dir:

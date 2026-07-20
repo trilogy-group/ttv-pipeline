@@ -349,6 +349,40 @@ def test_timeout_attempts_best_effort_cancellation(monkeypatch, tmp_path):
     assert generator.last_request_metadata["cancellation_requested"] is True
 
 
+def test_keyboard_interrupt_attempts_best_effort_cancellation(monkeypatch, tmp_path):
+    first, _ = _images(tmp_path)
+    endpoint = "bytedance/seedance-2.0/image-to-video"
+    _install_completed_queue(monkeypatch, endpoint)
+    cancel = Mock(return_value=_response(202, {}))
+    monkeypatch.setattr("generators.remote.fal_generator.requests.put", cancel)
+    generator = FalGenerator({"api_key": "test-key", "model": endpoint})
+    monkeypatch.setattr(
+        generator, "_wait_for_completion", Mock(side_effect=KeyboardInterrupt)
+    )
+
+    with pytest.raises(KeyboardInterrupt):
+        generator.generate_video("move", str(first), str(tmp_path / "out.mp4"), 6)
+
+    cancel.assert_called_once()
+
+
+def test_retry_after_parsing_and_sleep_respect_deadline(monkeypatch):
+    generator = FalGenerator(
+        {"api_key": "test-key", "model": "bytedance/seedance-2.0/image-to-video"}
+    )
+    invalid = _response(429, {}, {"Retry-After": "not-a-date"})
+    delayed = _response(429, {}, {"Retry-After": "3600"})
+    sleep = Mock()
+    monkeypatch.setattr("generators.remote.fal_generator.time.sleep", sleep)
+    monkeypatch.setattr("generators.remote.fal_generator.time.monotonic", lambda: 10)
+    monkeypatch.setattr("generators.remote.fal_generator.random.uniform", lambda *_: 0)
+
+    assert generator._retry_after(invalid) is None
+    with pytest.raises(GenerationTimeoutError):
+        generator._sleep_before_retry(0, delayed, deadline=11)
+    sleep.assert_not_called()
+
+
 def test_strict_output_and_profile_input_validation(monkeypatch, tmp_path):
     first, _ = _images(tmp_path)
     endpoint = "bytedance/seedance-2.0/image-to-video"

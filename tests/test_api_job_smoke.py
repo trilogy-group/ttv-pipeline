@@ -79,6 +79,18 @@ def test_api_creates_and_resumes_reviewed_plan():
     assert storyboard_job.config["keyframes_only"] is True
 
 
+def test_api_rejects_reviewed_plan_frame_paths():
+    app = create_app()
+    client = TestClient(app)
+    plan = reviewed_plan()
+    plan["video_prompts"][0]["first_frame"] = "/tmp/private.png"
+
+    response = client.post("/v1/jobs", json={"enhanced_prompt": plan})
+
+    assert response.status_code == 422
+    assert "Frame references must be filenames" in response.text
+
+
 def test_mocked_api_job_reaches_worker_with_effective_config():
     pipeline_config = {
         "prompt": "default prompt",

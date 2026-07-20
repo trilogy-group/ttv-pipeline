@@ -285,7 +285,7 @@ class FalGenerator(VideoGeneratorInterface):
                 safe_to_retry=True,
                 deadline=deadline,
             )
-        except GenerationTimeoutError, KeyboardInterrupt:
+        except (GenerationTimeoutError, KeyboardInterrupt):
             self._cancel(lifecycle["cancel_url"], headers)
             raise
 
@@ -413,7 +413,7 @@ class FalGenerator(VideoGeneratorInterface):
                         else "fal.ai queue request failed"
                     )
                     raise APIError(message) from exc
-                self._sleep_before_retry(attempt, None)
+                self._sleep_before_retry(attempt, None, deadline)
                 continue
 
             if response.status_code < 400:
@@ -427,7 +427,7 @@ class FalGenerator(VideoGeneratorInterface):
 
             retryable = self._is_retryable(response)
             if retryable and attempt < self.max_retries - 1:
-                self._sleep_before_retry(attempt, response)
+                self._sleep_before_retry(attempt, response, deadline)
                 continue
             raise self._api_error(response)
 
@@ -493,10 +493,20 @@ class FalGenerator(VideoGeneratorInterface):
         except requests.RequestException:
             self.last_request_metadata["cancellation_requested"] = False
 
-    def _sleep_before_retry(self, attempt: int, response: requests.Response | None) -> None:
+    def _sleep_before_retry(
+        self,
+        attempt: int,
+        response: requests.Response | None,
+        deadline: float | None = None,
+    ) -> None:
         retry_after = self._retry_after(response) if response is not None else None
         delay = retry_after if retry_after is not None else min(2**attempt, 30)
-        time.sleep(delay + random.uniform(0, min(1.0, delay * 0.25)))
+        delay += random.uniform(0, min(1.0, delay * 0.25))
+        if deadline is not None and delay >= deadline - time.monotonic():
+            raise GenerationTimeoutError(
+                f"fal.ai generation timed out after {self.timeout:g} seconds"
+            )
+        time.sleep(delay)
 
     def _retry_after(self, response: requests.Response) -> float | None:
         value = self._header(response.headers, "Retry-After")
@@ -504,10 +514,10 @@ class FalGenerator(VideoGeneratorInterface):
             return None
         try:
             return max(0.0, float(value))
-        except TypeError, ValueError:
+        except (TypeError, ValueError):
             try:
                 return max(0.0, parsedate_to_datetime(str(value)).timestamp() - time.time())
-            except TypeError, ValueError, OverflowError:
+            except (TypeError, ValueError, OverflowError):
                 return None
 
     def _is_retryable(self, response: requests.Response) -> bool:

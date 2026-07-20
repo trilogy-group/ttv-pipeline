@@ -4,6 +4,7 @@ Pydantic models for API request/response validation and job management.
 
 from datetime import datetime, timezone
 from enum import Enum
+from pathlib import PurePosixPath, PureWindowsPath
 from typing import Optional, List, Dict, Any
 from pydantic import BaseModel, Field, StrictInt, field_validator, model_validator
 
@@ -38,6 +39,14 @@ class VideoPrompt(BaseModel):
     first_frame: Optional[str] = None
     last_frame: Optional[str] = None
     duration_seconds: int
+
+    @field_validator("first_frame", "last_frame")
+    @classmethod
+    def require_frame_filename(cls, value: Optional[str]) -> Optional[str]:
+        paths = (PurePosixPath(value), PureWindowsPath(value)) if value else ()
+        if any(path.name != value for path in paths):
+            raise ValueError("Frame references must be filenames, not paths")
+        return value
 
 
 class PromptEnhancementResult(BaseModel):

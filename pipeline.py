@@ -777,7 +777,6 @@ def prepare_keyframes(
             frame_path = resolve_frame_reference(frame_ref, frames_dir)
             if not os.path.exists(frame_path):
                 raise FileNotFoundError(f"{field} not found: {frame_path}")
-            prompt_item[field] = frame_path
 
     if generated_initial and os.path.exists(generated_initial):
         os.remove(generated_initial)
@@ -851,10 +850,8 @@ def generate_single_video_segment(
         logging.info(f"Segment {seg} using GPUs: {gpu_ids}")
         print(f"{Colors.BOLD}{Colors.YELLOW}Segment {seg}{Colors.RESET} using GPUs: {Colors.CYAN}{gpu_ids}{Colors.RESET}")
 
-    # ALWAYS use this exact directory structure - no exceptions
-    base_dir = os.getcwd()
-    frames_dir = os.path.join(base_dir, "output", "frames")
-    videos_dir = os.path.join(base_dir, "output", "videos")
+    frames_dir = os.path.join(output_dir, "frames")
+    videos_dir = os.path.join(output_dir, "videos")
 
     # Create fresh directories if needed (safe in multiprocessing)
     os.makedirs(frames_dir, exist_ok=True)
@@ -864,8 +861,10 @@ def generate_single_video_segment(
     print(f"\n{Colors.BOLD}{Colors.YELLOW}Generating video for segment {seg}:{Colors.RESET}")
     print(f"{Colors.CYAN}{prompt_text[:100]}...{Colors.RESET}")
 
+    if prompt_item.get("first_frame"):
+        first_file = resolve_frame_reference(prompt_item["first_frame"], frames_dir)
     # For the first segment, use the initial_image if provided
-    if seg == 1 and config.get("initial_image"):
+    elif seg == 1 and config.get("initial_image"):
         initial_image = config.get("initial_image")
         # Always use absolute paths for consistency
         if not os.path.isabs(initial_image):
@@ -889,7 +888,9 @@ def generate_single_video_segment(
             raise FileNotFoundError(f"Previous frame not found: {first_file}")
 
     # Path for this segment's keyframe
-    last_file = os.path.join(frames_dir, f"segment_{seg:02d}.png")
+    last_file = resolve_frame_reference(prompt_item.get("last_frame"), frames_dir)
+    if not last_file:
+        last_file = os.path.join(frames_dir, f"segment_{seg:02d}.png")
     if not os.path.exists(last_file):
         logging.error(f"Keyframe not found: {last_file}")
         logging.error(f"Directory contents: {os.listdir(frames_dir)}")
@@ -1241,8 +1242,10 @@ def generate_video_segments_sequential(
     for item in video_prompts:
         seg, prompt_text = item["segment"], item["prompt"]
 
-        # Determine the first frame for this segment
-        if seg == 1:
+        # Prefer the reviewed plan's explicit frame, especially across cuts.
+        if item.get("first_frame"):
+            first_file = resolve_frame_reference(item["first_frame"], frames_dir)
+        elif seg == 1:
             # For the first segment, check if initial_image is provided
             if config.get("initial_image"):
                 initial_image = config.get("initial_image")
@@ -1272,7 +1275,9 @@ def generate_video_segments_sequential(
                 raise FileNotFoundError(f"Previous frame not found: {first_file}")
 
         # Path for this segment's keyframe
-        last_file = os.path.join(frames_dir, f"segment_{seg:02d}.png")
+        last_file = resolve_frame_reference(item.get("last_frame"), frames_dir)
+        if not last_file:
+            last_file = os.path.join(frames_dir, f"segment_{seg:02d}.png")
         if not os.path.exists(last_file):
             logging.error(f"Keyframe not found: {last_file}")
             logging.error(f"Directory contents: {os.listdir(frames_dir)}")
