@@ -289,6 +289,22 @@ def test_veo_factory_uses_google_api_key_and_preview_model():
     assert generator.estimate_cost(8) == 3.2
 
 
+def test_veo_preview_model_requires_api_key():
+    with patch.dict(
+        "os.environ", {"GOOGLE_API_KEY": "", "GEMINI_API_KEY": ""}
+    ), patch.object(Veo3Generator, "_init_clients"):
+        with pytest.raises(VideoGenerationError, match="Gemini API mode requires"):
+            create_video_generator(
+                "veo3",
+                {
+                    "google_veo": {
+                        "project_id": "test-project",
+                        "veo_model": "veo-3.1-generate-preview",
+                    }
+                },
+            )
+
+
 def test_veo_api_key_normalizes_vertex_model_name():
     with patch.object(Veo3Generator, "_init_clients"):
         generator = Veo3Generator(

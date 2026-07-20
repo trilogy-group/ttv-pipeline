@@ -140,9 +140,9 @@ def create_video_generator(backend: str, config: Dict[str, Any]) -> VideoGenerat
                 "timeout": remote_settings.get("timeout", 600),
             }
 
-            if not api_key and not backend_config["project_id"]:
+            if use_developer_api and not api_key:
                 raise VideoGenerationError(
-                    "Google Veo 3 requires GOOGLE_API_KEY or a Google Cloud project ID"
+                    "Google Veo 3 Gemini API mode requires GOOGLE_API_KEY or GEMINI_API_KEY"
                 )
         
         elif backend == "minimax":

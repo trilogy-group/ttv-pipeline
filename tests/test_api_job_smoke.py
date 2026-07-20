@@ -81,6 +81,38 @@ def test_api_creates_and_resumes_reviewed_plan():
     assert storyboard_job.config["keyframes_only"] is True
 
 
+def test_api_resumes_trimmed_plan_without_repeating_duration():
+    api_config = APIConfig(
+        gcs=GCSConfig(bucket="test-bucket"),
+        pipeline_config={
+            "default_backend": "veo3",
+            "generation_mode": "keyframe",
+            "single_keyframe_mode": True,
+        },
+    )
+    queue = MockJobQueue(MockRedisManager(api_config.redis))
+    app = create_app()
+    app.state.config = api_config
+    app.state.job_queue = queue
+    plan = reviewed_plan()
+    plan["segmentation_logic"].update(total_duration_seconds=9, number_of_segments=2)
+    plan["keyframe_prompts"].append({"segment": 2, "prompt": "frame 2"})
+    plan["video_prompts"].append({
+        "segment": 2,
+        "prompt": "move 2",
+        "first_frame": "segment_01.png",
+        "last_frame": "segment_02.png",
+        "duration_seconds": 6,
+    })
+
+    response = TestClient(app).post("/v1/jobs", json={"enhanced_prompt": plan})
+
+    assert response.status_code == 202
+    stored_job = queue.get_job(response.json()["id"])
+    assert stored_job.config["duration_seconds"] == 9
+    assert "ending keyframe will not appear" in response.json()["warnings"][0]
+
+
 def test_api_rejects_reviewed_plan_frame_paths():
     app = create_app()
     client = TestClient(app)
