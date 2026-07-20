@@ -378,6 +378,8 @@ def get_requested_job_timeout(config: Dict) -> int:
     """Allow enough queue time for every planned provider request plus pipeline overhead."""
     plan = get_requested_segment_plan(config)
     if not plan:
+        plan = (config.get("enhanced_prompt") or {}).get("video_prompts", [])
+    if not plan:
         return 3600
     provider_timeout = max(
         600, int(config.get("remote_api_settings", {}).get("timeout", 600))

@@ -606,6 +606,10 @@ def test_requested_duration_scales_queue_timeout():
     }
     assert get_requested_job_timeout(config) == 3600 + 1805 * 600
 
+    config.pop("duration_seconds")
+    config["enhanced_prompt"] = {"video_prompts": [{}, {}, {}]}
+    assert get_requested_job_timeout(config) == 3600 + 3 * 600
+
 
 def test_cli_rejects_unsupported_duration_before_generation():
     with patch(

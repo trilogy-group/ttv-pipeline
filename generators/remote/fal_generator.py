@@ -44,6 +44,7 @@ VEO_DURATIONS = (4, 6, 8)
 _SEEDANCE_OPTIONS = (
     ("resolution", ("480p", "720p", "1080p", "4k")),
     ("aspect_ratio", ("auto", "21:9", "16:9", "4:3", "1:1", "3:4", "9:16")),
+    ("generate_audio", (True, False)),
     ("bitrate_mode", ("standard", "high")),
     ("end_user_id", None),
 )

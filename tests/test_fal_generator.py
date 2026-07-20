@@ -396,14 +396,37 @@ def test_strict_output_and_profile_input_validation(monkeypatch, tmp_path):
     with pytest.raises(Exception, match="video.url"):
         generator.generate_video("move", str(first), str(tmp_path / "out.mp4"), 6)
 
-    with pytest.raises(InvalidInputError, match="generate_audio"):
+    with pytest.raises(InvalidInputError, match="unknown_option"):
         generator.generate_video(
             "move",
             str(first),
             str(tmp_path / "out.mp4"),
             6,
-            fal_input={"generate_audio": False},
+            fal_input={"unknown_option": False},
         )
+
+
+@pytest.mark.parametrize(
+    "endpoint",
+    [
+        "bytedance/seedance-2.0/image-to-video",
+        "bytedance/seedance-2.0/fast/image-to-video",
+    ],
+)
+def test_seedance_profiles_forward_generate_audio(monkeypatch, tmp_path, endpoint):
+    first, _ = _images(tmp_path)
+    calls = _install_completed_queue(monkeypatch, endpoint)
+    generator = FalGenerator(
+        {
+            "api_key": "test-key",
+            "model": endpoint,
+            "default_input": {"generate_audio": False},
+        }
+    )
+
+    generator.generate_video("move", str(first), str(tmp_path / "out.mp4"), 4)
+
+    assert calls[0][2]["json"]["generate_audio"] is False
 
 
 def test_veo_profile_forwards_generate_audio(monkeypatch, tmp_path):
