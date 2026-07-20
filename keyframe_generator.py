@@ -570,7 +570,7 @@ def generate_keyframe_with_gemini(
                                 image = ImageOps.fit(
                                     image,
                                     expected_size,
-                                    method=Image.Resampling.LANCZOS,
+                                    method=getattr(Image, "Resampling", Image).LANCZOS,
                                 )
                         if Path(output_path).suffix.lower() == ".png":
                             image.save(output_path, format="PNG")
@@ -823,6 +823,21 @@ def generate_keyframes_from_json(json_file, output_dir, model_name=None, imageRo
                     create_mask=False,
                     reference_images_dir=reference_images_dir,
                     max_retries=max_retries
+                )
+            elif segment == 1:
+                generated_file = generate_keyframe(
+                    prompt=prompt,
+                    output_path=output_path,
+                    model_name=model_name,
+                    imageRouter_api_key=imageRouter_api_key,
+                    stability_api_key=stability_api_key,
+                    openai_api_key=openai_api_key,
+                    gemini_api_key=gemini_api_key,
+                    input_image_path=None,
+                    size=image_size,
+                    create_mask=False,
+                    reference_images_dir=reference_images_dir,
+                    max_retries=max_retries,
                 )
             else:
                 raise ValueError(

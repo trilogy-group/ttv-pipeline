@@ -1,3 +1,4 @@
+import json
 import sys
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -288,6 +289,23 @@ def test_veo_factory_uses_google_api_key_and_preview_model():
     assert generator.estimate_cost(8) == 3.2
 
 
+def test_veo_factory_does_not_force_developer_api_for_vertex_model():
+    with patch.object(Veo3Generator, "_init_clients"):
+        generator = create_video_generator(
+            "veo3",
+            {
+                "google_veo": {
+                    "project_id": "test-project",
+                    "api_key": "developer-key",
+                    "veo_model": "veo-3.1-generate-001",
+                }
+            },
+        )
+
+    assert generator.api_key is None
+    assert generator.model_name == "veo-3.1-generate-001"
+
+
 def test_veo_request_contains_model_duration_and_both_frames(tmp_path):
     first_frame = tmp_path / "first.png"
     last_frame = tmp_path / "last.png"
@@ -493,7 +511,12 @@ def test_plan_only_preserves_existing_media(tmp_path, monkeypatch):
         }],
     }
 
-    with patch("pipeline.enhance_prompt", return_value=plan):
+    def write_plan(*_args):
+        plan_path = tmp_path / "output" / "enhanced_prompt.json"
+        plan_path.write_text(json.dumps(plan))
+        return plan
+
+    with patch("pipeline.enhance_prompt", side_effect=write_plan):
         result = run_pipeline(str(config_path), plan_only=True)
 
     assert result == str(tmp_path / "output" / "enhanced_prompt.json")

@@ -1,10 +1,12 @@
-from unittest.mock import patch
+import inspect
+from unittest.mock import Mock, patch
 
 from fastapi.testclient import TestClient
 
 from api.config import APIConfig, GCSConfig
 from api.main import create_app
 from api.models import JobStatus
+from api.routes.jobs import create_plan
 from tests.mocks.mock_redis import MockJobQueue, MockRedisManager
 from workers.video_worker import process_video_job
 
@@ -89,6 +91,53 @@ def test_api_rejects_reviewed_plan_frame_paths():
 
     assert response.status_code == 422
     assert "Frame references must be filenames" in response.text
+
+
+def test_storyboard_job_exposes_generic_artifact_metadata():
+    api_config = APIConfig(
+        gcs=GCSConfig(bucket="test-bucket"),
+        pipeline_config={
+            "default_backend": "veo3",
+            "generation_mode": "keyframe",
+            "single_keyframe_mode": True,
+        },
+    )
+    queue = MockJobQueue(MockRedisManager(api_config.redis))
+    app = create_app()
+    app.state.config = api_config
+    app.state.job_queue = queue
+    client = TestClient(app)
+
+    assert not inspect.iscoroutinefunction(create_plan)
+
+    response = client.post(
+        "/v1/jobs",
+        json={"enhanced_prompt": reviewed_plan(), "keyframes_only": True},
+    )
+    job_id = response.json()["id"]
+    gcs_uri = f"gs://test-bucket/ttv-api/{job_id}/keyframe_storyboard.zip"
+    queue.update_job_status(job_id, JobStatus.FINISHED, gcs_uri=gcs_uri)
+    gcs_client = Mock()
+    gcs_client.generate_signed_url.return_value = "https://example.com/storyboard"
+
+    with patch("api.gcs_client.create_gcs_client", return_value=gcs_client):
+        artifact = client.get(f"/v1/jobs/{job_id}/artifact-url")
+
+    assert artifact.status_code == 200
+    assert artifact.json()["artifact_name"] == "keyframe_storyboard.zip"
+    assert artifact.json()["mime_type"] == "application/zip"
+    assert artifact.json()["artifact_url"] == "https://example.com/storyboard"
+    assert "video_url" not in artifact.json()
+
+    queue.update_job_status(
+        job_id,
+        JobStatus.FINISHED,
+        gcs_uri=f"gs://test-bucket/ttv-api/{job_id}/final_video.mp4",
+    )
+    with patch("api.gcs_client.create_gcs_client", return_value=gcs_client):
+        video = client.get(f"/v1/jobs/{job_id}/video-url")
+    assert video.json()["mime_type"] == "video/mp4"
+    assert video.json()["video_url"] == "https://example.com/storyboard"
 
 
 def test_mocked_api_job_reaches_worker_with_effective_config():

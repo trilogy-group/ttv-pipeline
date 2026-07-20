@@ -1706,7 +1706,14 @@ def run_pipeline(
     # Call the enhanced prompt function with colorful output
     enhanced_data = enhance_prompt(raw_prompt or "Reviewed prompt plan", config, output_dir)
     if plan_only:
-        return os.path.join(output_dir, "enhanced_prompt.json")
+        if not enhanced_data.get("video_prompts"):
+            raise ValueError(
+                "--plan-only requires an OpenAI API key or --enhanced-prompt-file"
+            )
+        plan_path = os.path.join(output_dir, "enhanced_prompt.json")
+        if not os.path.isfile(plan_path):
+            raise RuntimeError(f"Plan was not written: {plan_path}")
+        return plan_path
 
     frames_dir = os.path.join(output_dir, "frames")
     videos_dir = os.path.join(output_dir, "videos")

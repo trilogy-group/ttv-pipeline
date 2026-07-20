@@ -4,6 +4,8 @@ Job management routes for the API server.
 This module contains the job creation, status, and management endpoints.
 """
 
+import mimetypes
+import os
 from datetime import datetime, timedelta, timezone
 from typing import List
 
@@ -31,7 +33,7 @@ plans_router = APIRouter(tags=["plans"])
     response_model=PromptEnhancementResult,
     response_model_exclude_unset=True,
 )
-async def create_plan(
+def create_plan(
     request_obj: Request,
     request: PlanCreateRequest,
 ) -> PromptEnhancementResult:
@@ -189,13 +191,14 @@ async def get_job_status(
 
 
 @router.get("/{job_id}/video-url")
-async def get_job_video_url(
+@router.get("/{job_id}/artifact-url")
+async def get_job_artifact_url(
     request_obj: Request,
     job_id: str,
     expiration_seconds: int = 3600
 ) -> dict:
     """
-    Get a signed video URL for a completed job's video.
+    Get a signed URL and media metadata for a completed job artifact.
     
     Returns a time-limited signed URL that can be used to stream or embed the video
     directly from Google Cloud Storage without authentication.
@@ -230,7 +233,7 @@ async def get_job_video_url(
     if not job.gcs_uri:
         raise HTTPException(
             status_code=404, 
-            detail="No video artifact found for this job"
+            detail="No artifact found for this job"
         )
     
     # Create GCS client and generate signed URL
@@ -251,16 +254,22 @@ async def get_job_video_url(
         
         logger.info(f"Generated signed URL for job {job_id}, expires at {expiration_time}")
         
-        return {
-            "video_url": signed_url,
+        artifact_name = os.path.basename(job.gcs_uri)
+        mime_type = mimetypes.guess_type(artifact_name)[0] or "application/octet-stream"
+        response = {
+            "artifact_url": signed_url,
+            "artifact_name": artifact_name,
             "expires_at": expiration_time.isoformat(),
             "expiration_seconds": expiration_seconds,
-            "mime_type": "video/mp4"
+            "mime_type": mime_type,
         }
+        if mime_type.startswith("video/"):
+            response["video_url"] = signed_url
+        return response
         
     except Exception as e:
         logger.error(f"Failed to generate signed URL for job {job_id}: {e}")
         raise HTTPException(
             status_code=500,
-            detail="Failed to generate video URL"
+            detail="Failed to generate artifact URL"
         )

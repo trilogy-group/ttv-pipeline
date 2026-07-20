@@ -93,6 +93,26 @@ def test_cut_resets_conditioning_and_continue_reuses_previous_end(tmp_path):
     ]
 
 
+def test_legacy_first_keyframe_uses_text_to_image_without_initial_frame(tmp_path):
+    plan_path = tmp_path / "plan.json"
+    plan_path.write_text(
+        json.dumps({"keyframe_prompts": [{"segment": 1, "prompt": "opening"}]})
+    )
+    frames_dir = tmp_path / "frames"
+
+    def generate(**kwargs):
+        output_path = kwargs["output_path"]
+        with open(output_path, "wb") as file:
+            file.write(b"frame")
+        return output_path
+
+    with patch("keyframe_generator.generate_keyframe", side_effect=generate) as image_call:
+        generated = generate_keyframes_from_json(str(plan_path), str(frames_dir))
+
+    assert generated == [str(frames_dir / "segment_01.png")]
+    assert image_call.call_args.kwargs["input_image_path"] is None
+
+
 def test_keyframes_only_stops_before_video_generation(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     config_path = tmp_path / "config.yaml"
@@ -118,6 +138,18 @@ def test_keyframes_only_stops_before_video_generation(tmp_path, monkeypatch):
     assert result == str(tmp_path / "output" / "frames")
     prepare.assert_called_once()
     generate_video.assert_not_called()
+
+
+def test_plan_only_fails_when_prompt_enhancement_is_skipped(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("prompt: test\n")
+    stale_plan = tmp_path / "output" / "enhanced_prompt.json"
+    stale_plan.parent.mkdir()
+    stale_plan.write_text("{}")
+
+    with pytest.raises(ValueError, match="requires an OpenAI API key"):
+        run_pipeline(str(config_path), plan_only=True)
 
 
 def test_storyboard_archive_contains_only_plan_and_frames(tmp_path):

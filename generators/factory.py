@@ -122,7 +122,7 @@ def create_video_generator(backend: str, config: Dict[str, Any]) -> VideoGenerat
             use_developer_api = not project_id or bool(
                 veo_model and veo_model.endswith("-preview")
             )
-            api_key = veo_config.get("api_key")
+            api_key = veo_config.get("api_key") if use_developer_api else None
             if use_developer_api and not api_key:
                 api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
 
