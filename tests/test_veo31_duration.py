@@ -166,6 +166,8 @@ def test_fallback_to_veo_uses_supported_duration():
 
     assert get_provider_compatible_duration(config, "minimax", "veo3", 5) == 6
     assert get_provider_compatible_duration(config, "fal", "veo3", 9) == 8
+    config["google_veo"] = {"resolution": "1080p"}
+    assert get_provider_compatible_duration(config, "minimax", "veo3", 5) == 8
 
 
 def test_pipeline_forwards_segment_duration_and_both_frames(tmp_path):

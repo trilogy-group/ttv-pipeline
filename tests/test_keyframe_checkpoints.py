@@ -130,6 +130,7 @@ def test_keyframes_only_stops_before_video_generation(tmp_path, monkeypatch):
             {
                 "generation_mode": "keyframe",
                 "image_generation_model": "test",
+                "duration_seconds": 8,
             }
         )
     )
@@ -145,8 +146,35 @@ def test_keyframes_only_stops_before_video_generation(tmp_path, monkeypatch):
         )
 
     assert result == str(tmp_path / "output" / "frames")
+    assert "duration_seconds" not in prepare.call_args.args[0]
     prepare.assert_called_once()
     generate_video.assert_not_called()
+
+
+def test_cli_reviewed_plan_restores_trimmed_duration(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "default_backend": "veo3",
+                "generation_mode": "keyframe",
+                "single_keyframe_mode": True,
+                "image_generation_model": "test",
+            }
+        )
+    )
+    plan = one_shot_plan()
+    plan["segmentation_logic"]["total_duration_seconds"] = 3
+    plan_path = tmp_path / "plan.json"
+    plan_path.write_text(json.dumps(plan))
+
+    with patch("pipeline.prepare_keyframes", return_value=["frame.png"]) as prepare:
+        run_pipeline(
+            str(config_path), enhanced_prompt_file=str(plan_path), keyframes_only=True
+        )
+
+    assert prepare.call_args.args[0]["duration_seconds"] == 3
 
 
 def test_plan_only_fails_when_prompt_enhancement_is_skipped(tmp_path, monkeypatch):

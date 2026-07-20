@@ -87,20 +87,12 @@ async def create_job(request_obj: Request, request: JobCreateRequest) -> JobCrea
         request.duration_seconds,
     )
     if request.enhanced_prompt is not None:
+        from pipeline import apply_reviewed_plan_config
+
         reviewed_plan = request.enhanced_prompt.model_dump(exclude_unset=True)
-        if request.duration_seconds is None:
-            requested_total = reviewed_plan["segmentation_logic"][
-                "total_duration_seconds"
-            ]
-            generated_total = sum(
-                segment["duration_seconds"]
-                for segment in reviewed_plan["video_prompts"]
-            )
-            if requested_total != generated_total:
-                effective_config["duration_seconds"] = requested_total
-            else:
-                effective_config.pop("duration_seconds", None)
-        effective_config["enhanced_prompt"] = reviewed_plan
+        apply_reviewed_plan_config(
+            effective_config, reviewed_plan, request.duration_seconds
+        )
     if request.keyframes_only:
         effective_config["keyframes_only"] = True
         if effective_config.get("generation_mode", "keyframe").lower() != "keyframe":

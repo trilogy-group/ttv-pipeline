@@ -200,16 +200,20 @@ def _normalized_backend(backend: str) -> str:
     return name
 
 
+def _get_veo_clip_durations(config: Dict) -> tuple[int, ...]:
+    if config.get("google_veo", {}).get("resolution", "720p") in {
+        "1080p",
+        "4k",
+    }:
+        return (8,)
+    return VEO_CLIP_DURATIONS
+
+
 def get_backend_clip_durations(config: Dict) -> tuple[int, ...] | None:
     """Return the active provider's allowed clip lengths, when constrained."""
     backend = _normalized_backend(get_video_generation_backend(config))
     if backend == "veo3":
-        if config.get("google_veo", {}).get("resolution", "720p") in {
-            "1080p",
-            "4k",
-        }:
-            return (8,)
-        return VEO_CLIP_DURATIONS
+        return _get_veo_clip_durations(config)
     if backend == "fal":
         return get_fal_clip_durations(config.get("fal", {}).get("model"))
     return None
@@ -224,15 +228,13 @@ def get_provider_compatible_duration(
     """Map fallback attempts to the receiving provider's duration contract."""
     primary = _normalized_backend(primary_backend)
     attempt = _normalized_backend(attempt_backend)
-    if attempt == "veo3" and planned_duration not in VEO_CLIP_DURATIONS:
-        return next(
-            (
-                duration
-                for duration in VEO_CLIP_DURATIONS
-                if duration >= planned_duration
-            ),
-            VEO_CLIP_DURATIONS[-1],
-        )
+    if attempt == "veo3":
+        durations = _get_veo_clip_durations(config)
+        if planned_duration not in durations:
+            return next(
+                (duration for duration in durations if duration >= planned_duration),
+                durations[-1],
+            )
     if attempt == "fal":
         durations = get_fal_clip_durations(config.get("fal", {}).get("model"))
         if planned_duration not in durations:
@@ -243,6 +245,25 @@ def get_provider_compatible_duration(
     if primary in {"veo3", "fal"} and attempt not in {"veo3", "fal"}:
         return config.get("segment_duration_seconds", 5.0)
     return planned_duration
+
+
+def apply_reviewed_plan_config(
+    config: Dict, reviewed_plan: Dict, duration_seconds: Optional[int]
+) -> None:
+    """Attach a reviewed plan without retaining an unrelated configured duration."""
+    if duration_seconds is None:
+        requested_total = reviewed_plan["segmentation_logic"][
+            "total_duration_seconds"
+        ]
+        generated_total = sum(
+            segment["duration_seconds"]
+            for segment in reviewed_plan["video_prompts"]
+        )
+        if requested_total != generated_total:
+            config["duration_seconds"] = requested_total
+        else:
+            config.pop("duration_seconds", None)
+    config["enhanced_prompt"] = reviewed_plan
 
 
 def resolve_frame_reference(frame_ref: Optional[str], frames_dir: str) -> Optional[str]:
@@ -1733,7 +1754,7 @@ def run_pipeline(
 
     if enhanced_prompt_file:
         with open(enhanced_prompt_file, "r") as file:
-            config["enhanced_prompt"] = json.load(file)
+            apply_reviewed_plan_config(config, json.load(file), duration_seconds)
 
     # Reject unsupported or excessive requests before any generation work.
     get_requested_segment_plan(config)
