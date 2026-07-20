@@ -449,16 +449,10 @@ def build_prompt_enhancement_instructions(config: Dict) -> str:
 
 def validate_prompt_enhancement(result: Dict, config: Dict) -> None:
     """Reject an LLM decomposition that does not match the provider duration plan."""
-    durations_allowed = get_backend_clip_durations(config)
-    if durations_allowed is None:
-        return
-
     video_prompts = result["video_prompts"]
     keyframe_prompts = result["keyframe_prompts"]
     segmentation = result["segmentation_logic"]
     segment_numbers = list(range(1, len(video_prompts) + 1))
-    durations = [item.get("duration_seconds") for item in video_prompts]
-    expected = get_requested_segment_plan(config)
 
     if [item.get("segment") for item in video_prompts] != segment_numbers:
         raise ValueError("LLM video segments are not sequential")
@@ -491,6 +485,13 @@ def validate_prompt_enhancement(result: Dict, config: Dict) -> None:
             raise ValueError(
                 f"Segment {segment} requires last_frame=segment_{segment:02d}.png"
             )
+
+    durations_allowed = get_backend_clip_durations(config)
+    if durations_allowed is None:
+        return
+
+    durations = [item.get("duration_seconds") for item in video_prompts]
+    expected = get_requested_segment_plan(config)
     if expected and durations != expected:
         raise ValueError(f"LLM durations {durations} do not match requested segment plan {expected}")
     if not expected and any(duration not in durations_allowed for duration in durations):

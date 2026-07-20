@@ -406,6 +406,23 @@ def test_strict_output_and_profile_input_validation(monkeypatch, tmp_path):
         )
 
 
+def test_veo_profile_forwards_generate_audio(monkeypatch, tmp_path):
+    first, _ = _images(tmp_path)
+    endpoint = "fal-ai/veo3.1/image-to-video"
+    calls = _install_completed_queue(monkeypatch, endpoint)
+    generator = FalGenerator(
+        {
+            "api_key": "test-key",
+            "model": endpoint,
+            "default_input": {"generate_audio": False},
+        }
+    )
+
+    generator.generate_video("move", str(first), str(tmp_path / "out.mp4"), 4)
+
+    assert calls[0][2]["json"]["generate_audio"] is False
+
+
 def test_unprofiled_endpoint_fails_configuration_and_fal_key_is_preferred(monkeypatch):
     with pytest.raises(Exception, match="Unsupported fal.ai model endpoint"):
         FalGenerator({"api_key": "test-key", "model": "fal-ai/unknown"})

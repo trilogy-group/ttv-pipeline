@@ -53,6 +53,7 @@ _SEEDANCE_FAST_OPTIONS = (
 )
 _VEO_OPTIONS = (
     ("aspect_ratio", ("auto", "16:9", "9:16")),
+    ("generate_audio", (True, False)),
     ("negative_prompt", None),
     ("resolution", ("720p", "1080p", "4k")),
     ("seed", None),

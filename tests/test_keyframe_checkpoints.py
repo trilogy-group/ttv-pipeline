@@ -13,6 +13,7 @@ from pipeline import (
     generate_single_video_segment,
     generate_video_segments_sequential,
     run_pipeline,
+    validate_prompt_enhancement,
     validate_existing_keyframes,
 )
 from workers.video_worker import CancellationToken, execute_pipeline_with_config
@@ -49,6 +50,14 @@ def one_shot_plan():
 def test_cut_transition_requires_an_independent_start_prompt():
     with pytest.raises(ValidationError, match="cut keyframes require start_prompt"):
         KeyframePrompt(segment=1, transition="cut", prompt="end")
+
+
+def test_local_plan_validates_cut_frame_reference():
+    plan = one_shot_plan()
+    plan["video_prompts"][0]["first_frame"] = "provided_start_image.png"
+
+    with pytest.raises(ValueError, match="cut transition requires first_frame"):
+        validate_prompt_enhancement(plan, {"default_backend": "wan2.1"})
 
 
 def test_cut_resets_conditioning_and_continue_reuses_previous_end(tmp_path):

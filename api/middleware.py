@@ -554,7 +554,7 @@ class AuthTokenMiddleware(BaseHTTPMiddleware):
 
     def __init__(self, app, protected_paths: Optional[Set[str]] = None):
         super().__init__(app)
-        self.protected_paths = protected_paths or {"/v1/jobs"}
+        self.protected_paths = protected_paths or {"/v1/jobs", "/v1/plans"}
 
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
         # Skip CORS preflight
