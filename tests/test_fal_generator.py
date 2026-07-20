@@ -349,6 +349,43 @@ def test_timeout_attempts_best_effort_cancellation(monkeypatch, tmp_path):
     assert generator.last_request_metadata["cancellation_requested"] is True
 
 
+def test_in_flight_status_timeout_attempts_best_effort_cancellation(
+    monkeypatch, tmp_path
+):
+    first, _ = _images(tmp_path)
+    endpoint = "bytedance/seedance-2.0/image-to-video"
+    request_id = "req_timeout"
+    request_base = f"https://queue.fal.run/{endpoint}/requests/{request_id}"
+
+    def request(method, _url, **_kwargs):
+        if method == "POST":
+            return _response(
+                200,
+                {
+                    "request_id": request_id,
+                    "status_url": f"{request_base}/status",
+                    "response_url": f"{request_base}/response",
+                    "cancel_url": f"{request_base}/cancel",
+                },
+            )
+        raise requests.Timeout("status read exceeded its request timeout")
+
+    monkeypatch.setattr("generators.remote.fal_generator.requests.request", request)
+    cancel = Mock(return_value=_response(202, {"status": "CANCELLATION_REQUESTED"}))
+    monkeypatch.setattr("generators.remote.fal_generator.requests.put", cancel)
+    monkeypatch.setattr(
+        "generators.remote.fal_generator.time.monotonic",
+        Mock(side_effect=[0, 0, 0, 1]),
+    )
+    generator = FalGenerator({"api_key": "test-key", "model": endpoint, "timeout": 0.1})
+
+    with pytest.raises(GenerationTimeoutError):
+        generator.generate_video("move", str(first), str(tmp_path / "out.mp4"), 6)
+
+    cancel.assert_called_once()
+    assert generator.last_request_metadata["cancellation_requested"] is True
+
+
 def test_cancellation_check_attempts_best_effort_cancellation(monkeypatch, tmp_path):
     first, _ = _images(tmp_path)
     endpoint = "bytedance/seedance-2.0/image-to-video"
@@ -440,20 +477,21 @@ def test_strict_output_and_profile_input_validation(monkeypatch, tmp_path):
         "bytedance/seedance-2.0/fast/image-to-video",
     ],
 )
-def test_seedance_profiles_forward_generate_audio(monkeypatch, tmp_path, endpoint):
+def test_seedance_profiles_forward_supported_options(monkeypatch, tmp_path, endpoint):
     first, _ = _images(tmp_path)
     calls = _install_completed_queue(monkeypatch, endpoint)
     generator = FalGenerator(
         {
             "api_key": "test-key",
             "model": endpoint,
-            "default_input": {"generate_audio": False},
+            "default_input": {"generate_audio": False, "seed": 1234},
         }
     )
 
     generator.generate_video("move", str(first), str(tmp_path / "out.mp4"), 4)
 
     assert calls[0][2]["json"]["generate_audio"] is False
+    assert calls[0][2]["json"]["seed"] == 1234
 
 
 def test_veo_profile_forwards_generate_audio(monkeypatch, tmp_path):

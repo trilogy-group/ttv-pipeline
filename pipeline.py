@@ -37,6 +37,7 @@ from generators.remote.fal_generator import (
     fal_profile_supports_last_frame,
     get_fal_clip_durations,
 )
+from generators.remote.minimax_generator import MinimaxGenerator
 from video_generator_interface import (
     APIError,
     GenerationTimeoutError,
@@ -203,6 +204,11 @@ def get_backend_clip_durations(config: Dict) -> tuple[int, ...] | None:
     """Return the active provider's allowed clip lengths, when constrained."""
     backend = _normalized_backend(get_video_generation_backend(config))
     if backend == "veo3":
+        if config.get("google_veo", {}).get("resolution", "720p") in {
+            "1080p",
+            "4k",
+        }:
+            return (8,)
         return VEO_CLIP_DURATIONS
     if backend == "fal":
         return get_fal_clip_durations(config.get("fal", {}).get("model"))
@@ -486,6 +492,37 @@ def validate_prompt_enhancement(result: Dict, config: Dict) -> None:
         if video["last_frame"] != f"segment_{segment:02d}.png":
             raise ValueError(
                 f"Segment {segment} requires last_frame=segment_{segment:02d}.png"
+            )
+
+    backend = _normalized_backend(get_video_generation_backend(config))
+    if backend == "minimax":
+        max_duration = config.get("minimax", {}).get(
+            "max_duration", MinimaxGenerator.DEFAULT_MAX_DURATION
+        )
+        for item in video_prompts:
+            prompt = item.get("prompt")
+            if not isinstance(prompt, str) or not prompt.strip():
+                raise ValueError("LLM Minimax prompts cannot be empty")
+            if len(prompt) > MinimaxGenerator.MAX_PROMPT_LENGTH:
+                raise ValueError(
+                    "LLM Minimax prompts must be at most "
+                    f"{MinimaxGenerator.MAX_PROMPT_LENGTH} characters"
+                )
+            duration = item.get("duration_seconds")
+            if (
+                isinstance(duration, bool)
+                or not isinstance(duration, (int, float))
+                or duration < 1
+                or duration > max_duration
+            ):
+                raise ValueError(
+                    f"LLM Minimax durations must be between 1 and {max_duration} seconds"
+                )
+        total = sum(item["duration_seconds"] for item in video_prompts)
+        if segmentation.get("total_duration_seconds") != total:
+            raise ValueError(
+                f"LLM total duration {segmentation.get('total_duration_seconds')} "
+                f"does not match {total}"
             )
 
     durations_allowed = get_backend_clip_durations(config)

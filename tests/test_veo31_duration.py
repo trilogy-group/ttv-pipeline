@@ -17,6 +17,7 @@ from pipeline import (
     enhance_prompt_data,
     generate_video_chaining_mode,
     generate_video_segments_single_keyframe,
+    get_backend_clip_durations,
     get_duration_tradeoff,
     get_provider_compatible_duration,
     get_requested_job_timeout,
@@ -129,6 +130,35 @@ def test_omitted_duration_keeps_veo_planning_ai_inferred():
     assert instructions.count('"duration_seconds": 4') >= 2
     assert '"duration_seconds": 5' not in instructions
     assert get_trim_duration_seconds(config) is None
+
+
+@pytest.mark.parametrize("resolution", ["1080p", "4k"])
+def test_high_resolution_veo_plans_and_validates_only_eight_second_clips(
+    tmp_path, resolution
+):
+    config = {
+        "default_backend": "veo3",
+        "generation_mode": "keyframe",
+        "single_keyframe_mode": True,
+        "duration_seconds": 10,
+        "google_veo": {"resolution": resolution},
+    }
+
+    assert get_backend_clip_durations(config) == (8,)
+    assert get_requested_segment_plan(config) == [8, 8]
+
+    frame = tmp_path / "frame.png"
+    Image.new("RGB", (160, 90)).save(frame)
+    with patch.object(Veo3Generator, "_init_clients"):
+        generator = Veo3Generator(
+            {"api_key": "test-key", "resolution": resolution}
+        )
+
+    assert generator.validate_inputs("move", str(frame), 8) == []
+    assert any(
+        "requires an 8-second duration" in error
+        for error in generator.validate_inputs("move", str(frame), 6)
+    )
 
 
 def test_fallback_to_veo_uses_supported_duration():

@@ -190,7 +190,10 @@ class Veo3Generator(VideoGeneratorInterface):
                             f"Recommended: 16:9, 9:16, or 1:1")
         
         # Validate duration
-        if duration not in self.SUPPORTED_DURATIONS:
+        resolution = self.config.get("resolution", "720p")
+        if resolution in {"1080p", "4k"} and duration != 8:
+            errors.append(f"{resolution} Veo generation requires an 8-second duration")
+        elif duration not in self.SUPPORTED_DURATIONS:
             errors.append(f"Duration must be one of {self.SUPPORTED_DURATIONS} seconds")
         
         return errors

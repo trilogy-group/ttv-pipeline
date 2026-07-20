@@ -98,6 +98,8 @@ async def create_job(request_obj: Request, request: JobCreateRequest) -> JobCrea
             )
             if requested_total != generated_total:
                 effective_config["duration_seconds"] = requested_total
+            else:
+                effective_config.pop("duration_seconds", None)
         effective_config["enhanced_prompt"] = reviewed_plan
     if request.keyframes_only:
         effective_config["keyframes_only"] = True

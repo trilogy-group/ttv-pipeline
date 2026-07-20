@@ -47,6 +47,7 @@ _SEEDANCE_OPTIONS = (
     ("generate_audio", (True, False)),
     ("bitrate_mode", ("standard", "high")),
     ("end_user_id", None),
+    ("seed", None),
 )
 _SEEDANCE_FAST_OPTIONS = (
     ("resolution", ("480p", "720p")),
@@ -411,6 +412,10 @@ class FalGenerator(VideoGeneratorInterface):
                     timeout=request_timeout,
                 )
             except requests.RequestException as exc:
+                if deadline is not None and time.monotonic() >= deadline:
+                    raise GenerationTimeoutError(
+                        f"fal.ai generation timed out after {self.timeout:g} seconds"
+                    ) from exc
                 if not safe_to_retry or attempt == self.max_retries - 1:
                     message = (
                         "fal.ai submission outcome is unknown and was not retried"

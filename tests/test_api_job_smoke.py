@@ -1,6 +1,7 @@
 import inspect
 from unittest.mock import Mock, patch
 
+import pytest
 from fastapi.testclient import TestClient
 
 from api.config import APIConfig, GCSConfig
@@ -111,6 +112,67 @@ def test_api_resumes_trimmed_plan_without_repeating_duration():
     stored_job = queue.get_job(response.json()["id"])
     assert stored_job.config["duration_seconds"] == 9
     assert "ending keyframe will not appear" in response.json()["warnings"][0]
+
+
+def test_api_exact_reviewed_plan_clears_inherited_duration():
+    api_config = APIConfig(
+        gcs=GCSConfig(bucket="test-bucket"),
+        pipeline_config={
+            "default_backend": "veo3",
+            "generation_mode": "keyframe",
+            "single_keyframe_mode": True,
+            "duration_seconds": 8,
+        },
+    )
+    queue = MockJobQueue(MockRedisManager(api_config.redis))
+    app = create_app()
+    app.state.config = api_config
+    app.state.job_queue = queue
+
+    response = TestClient(app).post(
+        "/v1/jobs", json={"enhanced_prompt": reviewed_plan()}
+    )
+
+    assert response.status_code == 202
+    stored_job = queue.get_job(response.json()["id"])
+    assert "duration_seconds" not in stored_job.config
+
+
+@pytest.mark.parametrize(
+    ("duration", "prompt", "message"),
+    [
+        (10, "move", "Minimax durations"),
+        (4, "x" * 501, "Minimax prompts"),
+    ],
+)
+def test_api_rejects_invalid_minimax_plan_before_enqueue(duration, prompt, message):
+    api_config = APIConfig(
+        gcs=GCSConfig(bucket="test-bucket"),
+        pipeline_config={
+            "default_backend": "minimax",
+            "generation_mode": "keyframe",
+            "single_keyframe_mode": True,
+            "minimax": {"max_duration": 6},
+        },
+    )
+    queue = MockJobQueue(MockRedisManager(api_config.redis))
+    app = create_app()
+    app.state.config = api_config
+    app.state.job_queue = queue
+    plan = reviewed_plan()
+    plan["segmentation_logic"]["total_duration_seconds"] = duration
+    plan["video_prompts"][0].update(
+        prompt=prompt, duration_seconds=duration
+    )
+
+    with patch.object(queue, "enqueue_job") as enqueue_job:
+        response = TestClient(app).post(
+            "/v1/jobs", json={"enhanced_prompt": plan}
+        )
+
+    assert response.status_code == 422
+    assert message in response.text
+    enqueue_job.assert_not_called()
 
 
 def test_api_rejects_reviewed_plan_frame_paths():
