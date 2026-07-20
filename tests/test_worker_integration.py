@@ -256,7 +256,8 @@ class TestPipelineIntegration:
         mock_generate_segments.assert_called_once_with(
             config=config,
             video_prompts=video_prompts,
-            output_dir='/tmp/test'
+            output_dir='/tmp/test',
+            cancellation_check=cancellation_token.is_cancelled,
         )
     
     @patch('workers.gcs_uploader.upload_job_artifact')

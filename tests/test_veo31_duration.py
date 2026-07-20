@@ -289,6 +289,15 @@ def test_veo_factory_uses_google_api_key_and_preview_model():
     assert generator.estimate_cost(8) == 3.2
 
 
+def test_veo_api_key_normalizes_vertex_model_name():
+    with patch.object(Veo3Generator, "_init_clients"):
+        generator = Veo3Generator(
+            {"api_key": "test-key", "veo_model": "veo-3.1-generate-001"}
+        )
+
+    assert generator.model_name == "veo-3.1-generate-preview"
+
+
 def test_veo_factory_does_not_force_developer_api_for_vertex_model():
     with patch.object(Veo3Generator, "_init_clients"):
         generator = create_video_generator(
@@ -564,10 +573,14 @@ def test_long_requested_duration_batches_prompt_enhancement():
             ],
         }
 
+    final_batch = batch_result([8])
+    final_batch["video_prompts"][0]["first_frame"] = "segment_20.png"
+    final_batch["video_prompts"][0]["last_frame"] = "segment_21.png"
+
     with patch("pipeline.PromptEnhancer") as prompt_enhancer:
         prompt_enhancer.return_value.enhance.side_effect = [
             batch_result([8] * 20),
-            batch_result([8]),
+            final_batch,
         ]
         result = enhance_prompt_data(
             "A long journey",

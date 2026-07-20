@@ -48,7 +48,9 @@ class Veo3Generator(VideoGeneratorInterface):
     
     # Vertex AI and Gemini Developer API model names.
     MODEL_NAME = "veo-3.1-generate-001"
+    FAST_MODEL_NAME = "veo-3.1-fast-generate-001"
     API_MODEL_NAME = "veo-3.1-generate-preview"
+    API_FAST_MODEL_NAME = "veo-3.1-fast-generate-preview"
     SUPPORTED_DURATIONS = [4, 6, 8]
     
     PRICING = {
@@ -68,7 +70,17 @@ class Veo3Generator(VideoGeneratorInterface):
         self.output_bucket = config.get("output_bucket")
         self.max_retries = config.get("max_retries", 3)
         self.timeout = config.get("timeout", 600)
-        self.model_name = config.get("veo_model") or (
+        configured_model = config.get("veo_model")
+        if self.api_key and configured_model:
+            configured_model = {
+                self.MODEL_NAME: self.API_MODEL_NAME,
+                self.FAST_MODEL_NAME: self.API_FAST_MODEL_NAME,
+            }.get(configured_model, configured_model)
+            if configured_model not in {self.API_MODEL_NAME, self.API_FAST_MODEL_NAME}:
+                raise VideoGenerationError(
+                    f"Unsupported Gemini API Veo model: {configured_model}"
+                )
+        self.model_name = configured_model or (
             self.API_MODEL_NAME if self.api_key else self.MODEL_NAME
         )
         

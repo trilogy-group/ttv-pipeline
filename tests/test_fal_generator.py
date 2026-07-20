@@ -349,6 +349,33 @@ def test_timeout_attempts_best_effort_cancellation(monkeypatch, tmp_path):
     assert generator.last_request_metadata["cancellation_requested"] is True
 
 
+def test_cancellation_check_attempts_best_effort_cancellation(monkeypatch, tmp_path):
+    first, _ = _images(tmp_path)
+    endpoint = "bytedance/seedance-2.0/image-to-video"
+    _install_completed_queue(
+        monkeypatch,
+        endpoint,
+        statuses=[_response(200, {"status": "IN_QUEUE"})],
+    )
+    cancel = Mock(return_value=_response(202, {"status": "CANCELLATION_REQUESTED"}))
+    monkeypatch.setattr("generators.remote.fal_generator.requests.put", cancel)
+    monkeypatch.setattr("generators.remote.fal_generator.time.sleep", lambda *_: None)
+    cancellation_check = Mock(side_effect=[False, True])
+    generator = FalGenerator({"api_key": "test-key", "model": endpoint})
+
+    with pytest.raises(InterruptedError, match="cancelled"):
+        generator.generate_video(
+            "move",
+            str(first),
+            str(tmp_path / "out.mp4"),
+            6,
+            cancellation_check=cancellation_check,
+        )
+
+    cancel.assert_called_once()
+    assert generator.last_request_metadata["cancellation_requested"] is True
+
+
 def test_keyboard_interrupt_attempts_best_effort_cancellation(monkeypatch, tmp_path):
     first, _ = _images(tmp_path)
     endpoint = "bytedance/seedance-2.0/image-to-video"

@@ -277,9 +277,12 @@ class FalGenerator(VideoGeneratorInterface):
         )
         lifecycle = self._parse_submission(submission, profile.endpoint)
         self.last_request_metadata = lifecycle.copy()
+        cancellation_check = kwargs.get("cancellation_check")
 
         try:
-            status = self._wait_for_completion(lifecycle, headers, deadline)
+            status = self._wait_for_completion(
+                lifecycle, headers, deadline, cancellation_check
+            )
             result, response = self._request_json(
                 "GET",
                 lifecycle["response_url"],
@@ -287,7 +290,7 @@ class FalGenerator(VideoGeneratorInterface):
                 safe_to_retry=True,
                 deadline=deadline,
             )
-        except (GenerationTimeoutError, KeyboardInterrupt):
+        except (GenerationTimeoutError, InterruptedError, KeyboardInterrupt):
             self._cancel(lifecycle["cancel_url"], headers)
             raise
 
@@ -440,8 +443,11 @@ class FalGenerator(VideoGeneratorInterface):
         lifecycle: dict[str, Any],
         headers: dict[str, str],
         deadline: float,
+        cancellation_check=None,
     ) -> dict[str, Any]:
         while True:
+            if cancellation_check and cancellation_check():
+                raise InterruptedError("fal.ai generation cancelled")
             status, _ = self._request_json(
                 "GET",
                 lifecycle["status_url"],

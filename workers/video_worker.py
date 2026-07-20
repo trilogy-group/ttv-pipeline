@@ -661,7 +661,8 @@ def generate_video_segments_with_progress(
             video_paths = generate_video_segments_single_keyframe(
                 config=config,
                 video_prompts=video_prompts,
-                output_dir=output_dir
+                output_dir=output_dir,
+                cancellation_check=cancellation_token.is_cancelled,
             )
         else:
             # Use local Wan2.1 generation

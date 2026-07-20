@@ -582,7 +582,6 @@ def enhance_prompt_data(prompt: str, config: Dict) -> Dict:
             batch_result = enhancer.enhance(
                 build_prompt_enhancement_instructions(batch_config), batch_prompt
             )
-            validate_prompt_enhancement(batch_result, batch_config)
             reasonings.append(batch_result["segmentation_logic"]["reasoning"])
 
             for local_index, (keyframe_prompt, video_prompt) in enumerate(
@@ -1101,7 +1100,8 @@ def process_segment(prompt_item, gpu_ids, wan2_dir, config, output_dir, flf2v_mo
 def generate_video_segments_single_keyframe(
     config: Dict,
     video_prompts: List[Dict],
-    output_dir: str
+    output_dir: str,
+    cancellation_check=None,
 ) -> List[str]:
     """
     Generate video segments through remote keyframe APIs (e.g., Veo3 first/last frame).
@@ -1138,6 +1138,8 @@ def generate_video_segments_single_keyframe(
     logging.info(f"Absolute frames directory path for single-keyframe mode: {frames_dir_abs}")
 
     for prompt_item in video_prompts:
+        if cancellation_check and cancellation_check():
+            raise InterruptedError("Video generation cancelled")
         seg, prompt_text = prompt_item["segment"], prompt_item["prompt"]
         segment_duration = prompt_item.get(
             "duration_seconds", config.get("segment_duration_seconds", 5.0)
@@ -1192,6 +1194,7 @@ def generate_video_segments_single_keyframe(
                 output_path=video_file,
                 duration=segment_duration,
                 last_frame_path=last_frame_path,
+                cancellation_check=cancellation_check,
             )
 
             video_paths.append(video_file)
@@ -1219,6 +1222,7 @@ def generate_video_segments_single_keyframe(
                     output_path=video_file,
                     duration=fallback_duration,
                     last_frame_path=last_frame_path,
+                    cancellation_check=cancellation_check,
                 )
                 video_paths.append(video_file)
                 logging.info(f"Fallback succeeded for segment {seg}")
