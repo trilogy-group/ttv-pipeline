@@ -1093,6 +1093,7 @@ def generate_video_segments(
     from api.generation_ledger import active_ledger
     if ledger := active_ledger.get():
         config["_legacy_ledger_directory"] = str(ledger.root)
+        ledger.expected_segments = {prompt["segment"] for prompt in video_prompts}
     # Import multiprocessing here to avoid issues with recursive imports
     import multiprocessing as mp
     from functools import partial

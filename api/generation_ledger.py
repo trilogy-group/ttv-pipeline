@@ -24,6 +24,7 @@ class LegacyLedger:
         self.root = Path(root).resolve() / self.job_id
         self.root.mkdir(parents=True, exist_ok=True)
         self.events = []
+        self.expected_segments = set()
 
     def asset(self, source, role):
         source = Path(source)
@@ -44,10 +45,15 @@ class LegacyLedger:
         }
 
     def record(self, output, error, references=()):
+        from video_generator_interface import cleanup_prepared_reference
+
         references = output.reference_paths if output.reference_paths is not None else references
-        references = [
-            self.asset(p, "provider_reference") for p in references if p and Path(p).is_file()
-        ]
+        captured = []
+        for path in references:
+            if path and Path(path).is_file():
+                captured.append(self.asset(path, "provider_reference"))
+                cleanup_prepared_reference(path)
+        references = captured
         event = {
             "id": uid(),
             "segment": (
@@ -171,15 +177,29 @@ class LegacyLedger:
                             "media": event["media"],
                         }
                     )
+        succeeded = {
+            event["segment"] if event["segment"] is not None else event["output"]["path"]
+            for event in self.events if event["asset"]
+        }
+        failed = {
+            event["segment"] if event["segment"] is not None else event["output"]["path"]
+            for event in self.events if event["error"]
+        }
+        video_segments = {
+            event["segment"] for event in self.events
+            if event["asset"] and event["asset"]["mime_type"].startswith("video/")
+        }
+        incomplete = bool((failed - succeeded) or (self.expected_segments - video_segments))
         canceled = isinstance(error, InterruptedError)
         status = (
             "canceled"
             if canceled
-            else "partial" if error and (clips or frames) else "failed" if error else "succeeded"
+            else "partial" if (error or incomplete) and (clips or frames)
+            else "failed" if error or incomplete else "succeeded"
         )
         takes = []
         previews = []
-        if clips and all(c["media"]["measured_duration_s"] for c in clips) and not error:
+        if clips and all(c["media"]["measured_duration_s"] for c in clips) and status == "succeeded":
             if preview and Path(str(preview)).is_file():
                 previews.append(self.asset(preview, "scene_preview"))
             total = sum(c["media"]["measured_duration_s"] for c in clips)

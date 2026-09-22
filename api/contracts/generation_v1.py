@@ -415,6 +415,15 @@ def validate(kind: str, document: dict) -> dict:
             raise ValueError(f"Duplicate scene {key}")
     if kind == "GenerationRequest":
         _unique([asset for scene in scenes for asset in scene["reference_assets"]], "asset_id")
+        for scene in scenes:
+            for role in ("first_frame", "last_frame"):
+                if sum(asset["role"] == role for asset in scene["reference_assets"]) > 1:
+                    raise ValueError(f"Multiple {role} assets in one scene")
+    if kind == "EditorialSelection":
+        for scene in scenes:
+            for edit in scene["clip_edits"]:
+                if edit["trim_out_s"] <= edit["trim_in_s"]:
+                    raise ValueError("Clip edit out-point must exceed in-point")
     if kind == "GenerationResult":
         for scene in scenes:
             shots = _unique(scene["actual_shots"], "shot_id")

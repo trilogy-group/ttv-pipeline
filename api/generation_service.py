@@ -157,7 +157,7 @@ class GenerationService:
                             "default_video_generation_backend": provider,
                         }
                     )
-                durations = durations or [raw["max_duration"]]
+                durations = durations or list(range(1, math.floor(raw["max_duration"]) + 1))
                 model = raw.get("model") or next(
                     (
                         getattr(generator, name, None)
@@ -315,7 +315,11 @@ class GenerationService:
                     )
                 shots = []
                 for i, length in enumerate(lengths):
-                    prompt = "\n".join(v for v in scene["intent"].values() if v)
+                    prompt = "\n".join(
+                        scene["intent"][field]
+                        for field in ("summary", "entry_state", "exit_state", "continuity_notes")
+                        if scene["intent"][field]
+                    )
                     shots.append(
                         {
                             "shot_id": uid(),
@@ -471,6 +475,26 @@ class GenerationService:
                 or result["terminal_status"] != "succeeded"
             ):
                 raise ValueError("Keyframe result must be a successful result for this exact plan")
+        if approval["execution_mode"] == "video":
+            for planned_scene in plan["scenes"]:
+                scene = request_scenes[planned_scene["scene_id"]]
+                needs_first_frame = (
+                    not approval["approved_keyframe_result_id"]
+                    and scene["continuity"]["mode"] != "continue_from_previous"
+                    and not any(
+                        asset["role"] == "first_frame"
+                        for asset in scene["reference_assets"]
+                    )
+                )
+                minimum_calls = min(
+                    len(variant["shots"]) + needs_first_frame
+                    for variant in planned_scene["variants"]
+                    if variant["variant_id"] in allowed
+                )
+                if scene["generation_policy"]["max_attempts"] < minimum_calls:
+                    raise ValueError(
+                        "Scene attempt limit cannot cover required keyframe and video calls"
+                    )
         return plan, request
 
     def approve(self, approval):
@@ -603,17 +627,27 @@ class GenerationService:
         path = destination
         uri = path.as_uri()
         if self.config.get("gcs_bucket"):
-            from api.config import GCSConfig
-            from api.gcs_client import create_gcs_client
+            try:
+                from api.config import GCSConfig
+                from api.gcs_client import create_gcs_client
 
-            client = create_gcs_client(
-                GCSConfig(
-                    bucket=self.config["gcs_bucket"],
-                    prefix=self.config.get("gcs_prefix", "ttv-api"),
-                    credentials_path=self.config.get("credentials_path", "credentials.json"),
+                client = create_gcs_client(
+                    GCSConfig(
+                        bucket=self.config["gcs_bucket"],
+                        prefix=self.config.get("gcs_prefix", "ttv-api"),
+                        credentials_path=self.config.get("credentials_path", "credentials.json"),
+                    )
                 )
-            )
-            uri = client.upload_artifact(str(path), job_id, path.name)
+                uri = client.upload_artifact(str(path), job_id, path.name)
+            except Exception:
+                try:
+                    job = self.job(job_id)
+                    self._update(
+                        job_id,
+                        warnings=list(dict.fromkeys([*job["warnings"], "Asset publication pending"])),
+                    )
+                except KeyError:
+                    pass
         return {
             "asset_id": uid(),
             "uri": uri,
@@ -627,17 +661,36 @@ class GenerationService:
         """Snapshot exact post-preparation inputs reported by the provider adapter."""
         if output is None or output.reference_paths is None:
             return fallback_ids
+        from video_generator_interface import cleanup_prepared_reference
+
         known = list(result["reference_assets"])
         known.extend(k["asset"] for scene in result["scenes"] for k in scene["keyframes"])
         ids = []
+        sources = {prepared: source for source, prepared in output.reference_sources}
+        prepared_sources = {}
         for path in output.reference_paths:
             sha = file_hash(path)
-            asset = next((a for a in known if a["sha256"] == sha), None)
+            asset = next(
+                (a for a in known if a["sha256"] == sha and a["asset_id"] in fallback_ids),
+                None,
+            ) or next((a for a in known if a["sha256"] == sha), None)
             if asset is None:
                 asset = self._asset(path, "provider_reference", job_id)
                 result["reference_assets"].append(asset)
                 known.append(asset)
             ids.append(asset["asset_id"])
+            if path in sources:
+                source_sha = file_hash(sources[path])
+                source_asset = next(
+                    (a for a in known if a["sha256"] == source_sha and a["asset_id"] in fallback_ids),
+                    None,
+                ) or next((a for a in known if a["sha256"] == source_sha and a is not asset), None)
+                if source_asset is None:
+                    raise ValueError("Prepared reference has no recorded source asset")
+                prepared_sources[asset["asset_id"]] = source_asset["asset_id"]
+                cleanup_prepared_reference(path)
+        if prepared_sources:
+            output.parameters["prepared_reference_sources"] = canonical_bytes(prepared_sources).decode()
         return ids
 
     @contextmanager
@@ -751,6 +804,13 @@ class GenerationService:
             uri = self._asset(path, "generation_result", result["job_id"])["uri"]
         except Exception:
             warnings.append("Result is durable locally; object-store publication failed.")
+        warnings = [
+            warning for warning in self.job(result["job_id"])["warnings"]
+            if warning != "Result publication pending"
+        ] + warnings
+        if self.config.get("gcs_bucket") and urlsplit(uri).scheme == "file":
+            warnings.append("Result publication pending")
+        warnings = list(dict.fromkeys(warnings))
         self._update(result["job_id"], result_uri=uri, warnings=warnings)
         return result
 
@@ -927,7 +987,7 @@ class GenerationService:
                                         frames[k["position"]] = self._materialize(
                                             k["asset"], directory
                                         )
-                                        out["keyframes"].append(k)
+                                        out["keyframes"].append({**k, "attempt_id": None})
                                 if "first" not in frames:
                                     out["warnings"].append(
                                         "Approved keyframe result has no frame for this variant"
@@ -1188,6 +1248,7 @@ class GenerationService:
                                         duration=shot["nominal_duration_s"],
                                         last_frame_path=frames.get("last"),
                                         aspect_ratio=scene["delivery"]["aspect_ratio"],
+                                        approved_prompt=True,
                                         cancellation_check=lambda: self.job(job_id)[
                                             "cancel_requested"
                                         ],
@@ -1288,6 +1349,8 @@ class GenerationService:
                                 "media": media,
                             }
                             out["clips"].append(clip)
+                            if scene["delivery"]["audio_policy"] == "required" and not media["has_audio"]:
+                                raise ValueError("Generated clip has no required audio")
                             complete.append(clip)
                             # Continue from the actual generated boundary, rather than an imagined last frame.
                             boundary = directory / (uid() + ".png")
@@ -1433,7 +1496,7 @@ class GenerationService:
                 result_id=result["result_id"],
                 result_uri=path.as_uri(),
                 result_sha256=result["document_sha256"],
-                warnings=["Result publication pending"],
+                warnings=list(dict.fromkeys([*job["warnings"], "Result publication pending"])),
             )
             db.execute("UPDATE jobs SET body=? WHERE id=?", (canonical_bytes(job), job_id))
         return self._publish_result(result)

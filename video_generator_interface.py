@@ -16,6 +16,8 @@ from datetime import datetime, timezone
 from functools import wraps
 import inspect
 import os
+from pathlib import Path
+from tempfile import gettempdir
 
 
 @dataclass(frozen=True)
@@ -41,6 +43,7 @@ class GenerationOutput:
     finished_at: datetime
     billing: BillingObservation | None
     reference_paths: tuple[str, ...] | None = None
+    reference_sources: tuple[tuple[str, str], ...] = ()
 
     def __fspath__(self):
         return self.path
@@ -67,6 +70,13 @@ def replace_generation_reference(source, prepared):
             os.fspath(prepared) if path == os.fspath(source) else path
             for path in current.get("reference_paths", ())
         )
+        current["reference_sources"] += ((os.fspath(source), os.fspath(prepared)),)
+
+
+def cleanup_prepared_reference(path):
+    prepared = Path(path)
+    if prepared.parent == Path(gettempdir()) and prepared.name.startswith("ttv-prepared-"):
+        prepared.unlink(missing_ok=True)
 
 
 def recorded_generation(provider):
@@ -78,7 +88,7 @@ def recorded_generation(provider):
             details = dict(provider=provider, model=None, model_version=None,
                            provider_request_id=None, seed=None, parameters={}, prompt=prompt,
                            billing=BillingObservation(),
-                           reference_paths=(os.fspath(input_image_path),))
+                           reference_paths=(os.fspath(input_image_path),), reference_sources=())
             token = _call_details.set(details)
             try:
                 set_generation_details()

@@ -333,7 +333,10 @@ class MinimaxGenerator(VideoGeneratorInterface):
         self.logger.info(f"Estimated cost: ${estimated_cost:.2f}")
         
         # Add camera movement suggestions to prompt if not present
-        enhanced_prompt = self._enhance_prompt_with_camera_movement(prompt)
+        enhanced_prompt = (
+            prompt if kwargs.get("approved_prompt")
+            else self._enhance_prompt_with_camera_movement(prompt)
+        )
         
         # Use RetryHandler's retry_with_backoff method
         retry_handler = RetryHandler(max_retries=self.max_retries)
