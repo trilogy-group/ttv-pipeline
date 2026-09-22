@@ -13,6 +13,7 @@ import requests
 
 from generators.base import ImageValidator, download_file
 from video_generator_interface import (
+    recorded_generation, set_generation_details, BillingObservation, GenerationOutput,
     APIError,
     GenerationTimeoutError,
     InvalidInputError,
@@ -192,6 +193,7 @@ class FalGenerator(VideoGeneratorInterface):
                 profile.last_frame_field or profile.first_last_endpoint
             ),
             "supports_text_to_video": False,
+            "supports_audio": "generate_audio" in profile.options,
             "requires_gpu": False,
             "api_based": True,
             "provider_model_separation": True,
@@ -231,6 +233,7 @@ class FalGenerator(VideoGeneratorInterface):
 
         return errors
 
+    @recorded_generation("fal.ai")
     def generate_video(
         self,
         prompt: str,
@@ -238,7 +241,7 @@ class FalGenerator(VideoGeneratorInterface):
         output_path: str,
         duration: float | None = None,
         **kwargs: Any,
-    ) -> str:
+    ) -> GenerationOutput:
         self.last_request_metadata = {}
         validation_errors = self.validate_inputs(prompt, input_image_path, duration)
         if validation_errors:
@@ -265,6 +268,10 @@ class FalGenerator(VideoGeneratorInterface):
             None if duration is None else int(duration),
             kwargs.get("fal_input", {}),
         )
+        set_generation_details(model=profile.endpoint, prompt=payload["prompt"],
+            reference_paths=tuple(p for p in (input_image_path, last_frame_path if profile.last_frame_field else None) if p),
+            parameters={k: v for k, v in payload.items() if k not in {"prompt", profile.first_frame_field, profile.last_frame_field}},
+            seed=payload.get("seed"))
         headers = self._headers()
         submit_url = f"{self.base_url}/{profile.endpoint}"
         deadline = time.monotonic() + self.timeout
@@ -278,6 +285,7 @@ class FalGenerator(VideoGeneratorInterface):
         )
         lifecycle = self._parse_submission(submission, profile.endpoint)
         self.last_request_metadata = lifecycle.copy()
+        set_generation_details(provider_request_id=lifecycle["request_id"])
         cancellation_check = kwargs.get("cancellation_check")
 
         try:
@@ -316,6 +324,9 @@ class FalGenerator(VideoGeneratorInterface):
         if billable_units is not None:
             self.last_request_metadata["billable_units"] = billable_units
 
+        set_generation_details(seed=result.get("seed", payload.get("seed")),
+            billing=BillingObservation(raw_unit_name="X-Fal-Billable-Units" if billable_units is not None else None,
+                                       raw_units=billable_units))
         download_file(video["url"], output_path)
         return output_path
 

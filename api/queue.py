@@ -115,7 +115,8 @@ class JobQueue:
         self, 
         request: JobCreateRequest, 
         effective_config: Dict[str, Any],
-        job_timeout: int = 3600
+        job_timeout: int = 3600,
+        job_id: str | None = None
     ) -> JobData:
         """
         Enqueue a new video generation job
@@ -131,7 +132,7 @@ class JobQueue:
         Raises:
             Exception: If job enqueueing fails
         """
-        job_id = str(uuid.uuid4())
+        job_id = job_id or str(uuid.uuid4())
         created_at = datetime.now(timezone.utc)
         
         # Create job data

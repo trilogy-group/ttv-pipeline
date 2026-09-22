@@ -148,7 +148,11 @@ def test_profiled_payloads_use_queue_and_documented_fields(
         duration=duration,
     )
 
-    assert result == str(output)
+    assert result.path == str(output)
+    assert result.model == actual_model
+    assert result.provider_request_id == "req_123"
+    assert result.billing.raw_units == "6"
+    assert result.billing.actual_usd is None
     submit = calls[0]
     assert submit[0] == "POST"
     assert submit[1] == f"https://queue.fal.run/{actual_model}"

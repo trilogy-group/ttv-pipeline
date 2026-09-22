@@ -10,6 +10,7 @@ import logging
 from typing import Dict, Any, List, Optional
 from runwayml import RunwayML
 from video_generator_interface import (
+    recorded_generation, set_generation_details, BillingObservation, GenerationOutput,
     VideoGeneratorInterface, 
     VideoGenerationError,
     APIError,
@@ -57,7 +58,7 @@ class RunwayMLGenerator(VideoGeneratorInterface):
         
         # Initialize Runway client (SDK will read from environment variable)
         try:
-            self.client = RunwayML()
+            self.client = RunwayML(max_retries=0)
         except Exception as e:
             raise VideoGenerationError(f"Failed to initialize Runway client: {e}")
             
@@ -135,12 +136,13 @@ class RunwayMLGenerator(VideoGeneratorInterface):
         
         return errors
     
+    @recorded_generation("runway")
     def generate_video(self, 
                       prompt: str, 
                       input_image_path: str,
                       output_path: str,
                       duration: float = 5.0,
-                      **kwargs) -> str:
+                      **kwargs) -> GenerationOutput:
         """Generate video using Runway ML API"""
         # Validate inputs
         validation_errors = self.validate_inputs(prompt, input_image_path, duration)
@@ -159,6 +161,7 @@ class RunwayMLGenerator(VideoGeneratorInterface):
             
             # Determine aspect ratio from kwargs or use default
             ratio = kwargs.get("aspect_ratio", self.default_ratio)
+            ratio = {"16:9":"1280:720", "9:16":"720:1280", "1:1":"960:960", "4:3":"1104:832", "3:4":"832:1104", "21:9":"1584:672"}.get(ratio, ratio)
             
             # Create the image-to-video task
             self.logger.info(f"Creating video generation task with model {self.model_version}...")
@@ -178,9 +181,13 @@ class RunwayMLGenerator(VideoGeneratorInterface):
                 task_params["seed"] = int(seed)
                 self.logger.info(f"Using seed: {seed}")
             
+            set_generation_details(model=self.model_version, seed=task_params.get("seed"), prompt=prompt,
+                parameters={k: v for k, v in task_params.items() if k not in {"prompt_image", "prompt_text"}},
+                billing=BillingObservation(estimated_usd=estimated_cost))
             task = self.client.image_to_video.create(**task_params)
             
             task_id = task.id
+            set_generation_details(provider_request_id=task_id)
             self.logger.info(f"Task created with ID: {task_id}")
             
             # Poll for completion with progress monitoring

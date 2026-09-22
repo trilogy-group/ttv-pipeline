@@ -8,6 +8,7 @@ import logging
 from typing import Dict, Any, List, Optional
 
 from video_generator_interface import (
+    recorded_generation, set_generation_details, BillingObservation, GenerationOutput,
     VideoGeneratorInterface,
     VideoGenerationError,
     InvalidInputError,
@@ -67,6 +68,7 @@ class HunyuanVideoGenerator(VideoGeneratorInterface):
             )
         return errors
 
+    @recorded_generation("hunyuan")
     def generate_video(
         self,
         prompt: str,
@@ -74,7 +76,7 @@ class HunyuanVideoGenerator(VideoGeneratorInterface):
         output_path: str,
         duration: float = 5.0,
         **kwargs,
-    ) -> str:
+    ) -> GenerationOutput:
         validation_errors = self.validate_inputs(prompt, input_image_path, duration)
         if validation_errors:
             raise InvalidInputError(
@@ -106,6 +108,9 @@ class HunyuanVideoGenerator(VideoGeneratorInterface):
             cmd.extend(["--seed", str(int(seed))])
 
         try:
+            set_generation_details(model="hunyuan", seed=int(seed) if seed is not None else None,
+                parameters={"steps": self.sample_steps, "fps": 16},
+                billing=BillingObservation(estimated_usd=0.0))
             subprocess.run(cmd, cwd=self.hunyuan_dir, check=True)
             if not os.path.exists(output_path) or os.path.getsize(output_path) < 1000:
                 raise VideoGenerationError(

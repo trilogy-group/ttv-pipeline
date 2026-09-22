@@ -10,6 +10,99 @@ from abc import ABC, abstractmethod
 from typing import Optional, Dict, Any, List
 import logging
 
+from contextvars import ContextVar
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from functools import wraps
+import inspect
+import os
+
+
+@dataclass(frozen=True)
+class BillingObservation:
+    raw_unit_name: str | None = None
+    raw_units: str | None = None
+    estimated_usd: float | None = None
+    actual_usd: float | None = None
+    currency: str = "USD"
+
+
+@dataclass(frozen=True)
+class GenerationOutput:
+    path: str
+    provider: str
+    model: str | None
+    model_version: str | None
+    provider_request_id: str | None
+    seed: int | None
+    parameters: dict[str, object]
+    prompt: str
+    started_at: datetime
+    finished_at: datetime
+    billing: BillingObservation | None
+    reference_paths: tuple[str, ...] | None = None
+
+    def __fspath__(self):
+        return self.path
+
+
+# Details belong to this call, including on failure; no adapter last-call lookup.
+_call_details: ContextVar[dict | None] = ContextVar("generation_call_details", default=None)
+generation_observer: ContextVar[Any] = ContextVar("generation_observer", default=None)
+
+
+def set_generation_details(**details):
+    current = _call_details.get()
+    if current is not None:
+        current.update(details)
+        if observer := generation_observer.get():
+            observer(current)
+
+
+def replace_generation_reference(source, prepared):
+    """Retain the exact bytes submitted after provider-specific image preparation."""
+    current = _call_details.get()
+    if current is not None:
+        current["reference_paths"] = tuple(
+            os.fspath(prepared) if path == os.fspath(source) else path
+            for path in current.get("reference_paths", ())
+        )
+
+
+def recorded_generation(provider):
+    def decorate(function):
+        default_duration = inspect.signature(function).parameters["duration"].default
+        @wraps(function)
+        def wrapped(self, prompt, input_image_path, output_path, duration=default_duration, **kwargs):
+            started = datetime.now(timezone.utc)
+            details = dict(provider=provider, model=None, model_version=None,
+                           provider_request_id=None, seed=None, parameters={}, prompt=prompt,
+                           billing=BillingObservation(),
+                           reference_paths=(os.fspath(input_image_path),))
+            token = _call_details.set(details)
+            try:
+                set_generation_details()
+                path = function(self, prompt, input_image_path, output_path, duration, **kwargs)
+                output = GenerationOutput(path=os.fspath(path), started_at=started,
+                                        finished_at=datetime.now(timezone.utc), **details)
+                from api.generation_ledger import active_ledger
+                if ledger := active_ledger.get():
+                    ledger.record(output, None, [input_image_path, kwargs.get("last_frame_path")])
+                return output
+            except BaseException as error:
+                error.generation_output = GenerationOutput(
+                    path=output_path, started_at=started,
+                    finished_at=datetime.now(timezone.utc), **details)
+                from api.generation_ledger import active_ledger
+                if ledger := active_ledger.get():
+                    ledger.record(error.generation_output, error, [input_image_path, kwargs.get("last_frame_path")])
+                raise
+            finally:
+                _call_details.reset(token)
+        return wrapped
+    return decorate
+
+
 class VideoGeneratorInterface(ABC):
     """Abstract interface for video generation backends"""
     
@@ -29,7 +122,7 @@ class VideoGeneratorInterface(ABC):
                       input_image_path: str,
                       output_path: str,
                       duration: float = 5.0,
-                      **kwargs) -> str:
+                      **kwargs) -> GenerationOutput:
         """
         Generate a video segment
         
@@ -149,3 +242,35 @@ class InvalidInputError(VideoGenerationError):
 class QuotaExceededError(VideoGenerationError):
     """Exception for quota/rate limit errors"""
     pass
+
+
+def recorded_keyframe(function):
+    """Capture one image invocation; orchestration sets retries=0 before invoking it."""
+    @wraps(function)
+    def wrapped(prompt, output_path, model_name=None, **kwargs):
+        started = datetime.now(timezone.utc)
+        details = dict(provider='unknown', model=None, model_version=None,
+                       provider_request_id=None, seed=None, parameters={}, prompt=prompt,
+                       billing=BillingObservation(),
+                       reference_paths=tuple(os.fspath(p) for p in
+                           [kwargs.get('input_image_path'), kwargs.get('mask_path')] if p))
+        token = _call_details.set(details)
+        try:
+            set_generation_details()
+            path = function(prompt, output_path, model_name=model_name, **kwargs)
+            output = GenerationOutput(path=os.fspath(path), started_at=started,
+                                    finished_at=datetime.now(timezone.utc), **details)
+            from api.generation_ledger import active_ledger
+            if ledger := active_ledger.get():
+                ledger.record(output, None, [kwargs.get("input_image_path")])
+            return output
+        except BaseException as error:
+            error.generation_output = GenerationOutput(path=str(output_path), started_at=started,
+                finished_at=datetime.now(timezone.utc), **details)
+            from api.generation_ledger import active_ledger
+            if ledger := active_ledger.get():
+                ledger.record(error.generation_output, error, [kwargs.get("input_image_path")])
+            raise
+        finally:
+            _call_details.reset(token)
+    return wrapped
