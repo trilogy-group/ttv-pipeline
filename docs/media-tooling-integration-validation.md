@@ -1,40 +1,69 @@
 # Media Tooling integration validation
 
-Validated locally on Python 3.14.3 with FFmpeg/FFprobe. The implementation branch is `feat/ttv-media-integration`, based on `4c20bfc774ebd96c60d9b1988bf810c5165467e1`. Paid provider generation, deployment, push and merge were not run.
+Validated on Python 3.14.3 with FFmpeg/FFprobe on 2026-09-22. The integration is based on `4c20bfc774ebd96c60d9b1988bf810c5165467e1`. Local checks and a live process-boundary pilot pass. The primary MiniMax H3 Max generation remains blocked by the configured Fal account's exhausted balance.
 
-## Checks
+## Primary endpoint: MiniMax H3 Max
 
-The focused producer suite passed **123 tests**:
+Use [`examples/pipeline_config.h3-max.yaml`](../examples/pipeline_config.h3-max.yaml) and set `FAL_KEY` or `FAL_API_KEY` in the process environment. The exact endpoint is `minimax/h3-max/image-to-video`. Its profile uses integer durations from 5 through 15 seconds, uppercase resolution values, safety checking enabled, and `prompt_expansion_mode: disabled` by default. It supports a first image, an optional ending image and an output soundtrack.
+
+The attempted live case used a supplied first image, 5 seconds, `768P`, seed 42, one allowed attempt, no fallback and no paid image generation. The documented endpoint quote on 2026-09-22 was $0.20 for this case through September 30 ($0.40 afterward). The quote is separate from billing: adapter USD estimates and actual charges remain null, so the exact approval explicitly allows unknown cost. [Fal endpoint and pricing](https://fal.ai/models/minimax/h3-max/image-to-video).
+
+Two immutable failed results were retained. The controlled diagnostic submission returned HTTP 403 with the reason “Exhausted balance,” without an accepted provider request ID or generated clip. Media Tooling validated and imported that failed artifact chain. H3 generation, render and verification remain pending a funded account; neither retry nor funding was performed after this response.
+
+## Automated checks
+
+The expanded focused producer suite passes **162 tests**:
 
 ```sh
-python -m pytest tests/test_generation_integration.py tests/test_fal_generator.py tests/test_veo31_duration.py tests/test_keyframe_checkpoints.py tests/test_keyframe_generator_gemini.py tests/test_models.py tests/test_queue.py -q --tb=short
+python -m pytest tests/test_generation_integration.py tests/test_fal_generator.py tests/test_veo31_duration.py tests/test_keyframe_checkpoints.py tests/test_keyframe_generator_gemini.py tests/test_models.py tests/test_queue.py tests/test_middleware.py -q --tb=short
 ```
 
-The 14 integration tests exercise immutable hashes and shared fixtures, exact approval/expiry/capability guards, approved fallback provenance, duplicate/conflicting requests, known/unknown costs, cancellation, targeted regeneration, keyframe review, HTTP/file canonical parity, both worker entry points, retained standalone source clips, prepared input snapshots, durable submission receipts and terminal publication recovery without provider replay.
+Coverage includes shared contracts, exact approval/expiry/capability guards, billing and budgets, cancellation, regeneration, both workers, HTTP/file canonical parity, prepared input snapshots, durable submission receipts and terminal recovery. Runtime regressions additionally cover v2 authentication and request validation, explicit local publication, optional ending frames, H3 integer payloads and metadata, unknown/resolution-specific Veo prices, safe HTTP failure diagnostics, no repeated paid POST after 429/503, and retaining an accepted request ID before validating lifecycle URLs.
 
-Ruff and Black pass on the new integration modules, contract producer, pilot and acceptance tests. `git diff --check` and Python compilation pass. `uv build --wheel --out-dir /tmp/ttv-integration-wheel` succeeds; the wheel contains all five schemas, ten fixtures, hash manifest and contract README.
+Ruff and Black pass on the integration modules, contract producer, pilot and acceptance tests. Python compilation and `git diff --check` pass. `uv build --wheel --out-dir /tmp/ttv-integration-wheel` succeeds; the wheel contains all five schemas, ten fixtures, the hash manifest and contract README. The shared validator corpus matches in both repositories: seven accepted and fifteen rejected cases.
 
-The existing worker/backend regression set has **90 passed and 21 failed**, with exactly the same failing test names on the immutable base commit and this implementation:
+The existing worker/backend regression set has **90 passed and 21 failed**, with the same failing test names on the immutable base and the initial integration implementation:
 
 ```sh
 python -m pytest tests/test_models.py tests/test_queue.py tests/test_video_worker.py tests/test_trio_video_worker.py tests/test_trio_integration.py tests/test_integration_mocked_backends.py tests/test_keyframe_generator_gemini.py -q --tb=short
 ```
 
-These failures include legacy mocks requiring deployment configuration/credentials, existing Trio expectations and authenticated API fixture mismatches. The artifact endpoint suite also has the same baseline result: **1 passed, 17 failed**, primarily authorization fixture mismatches. These comparisons establish baseline parity for the exercised paths; the full pre-existing suite is not green in this environment.
+Those failures include deployment configuration/credential-dependent legacy mocks, existing Trio expectations and API authentication fixtures. The artifact endpoint suite likewise matched its baseline: **1 passed, 17 failed**. The complete pre-existing suite is not green in this environment.
 
-## Cross-repository pilot
+## Live HTTP, Redis and RQ
 
-`scripts/integration_pilot.py` uses the production generation service with deterministic providers and real synthetic media. It emits a single-clip scene, a multi-clip scene, a failed attempt followed by an approved fallback, a downstream take dependency, and a targeted middle-scene replacement.
+A real Hypercorn server, dedicated loopback Redis server and RQ `SpawnWorker` processed requests from the shipped Media Tooling CLI. The API used its normal lifespan/configuration and routes; deterministic providers replaced only the paid generation boundary. The API and worker shared a task-local durable filesystem. Redis used its own port, with no existing jobs affected.
 
-The Media Tooling consumer at commit `8bce40e435d6454002e529193fb4367de9ebae67` imported those actual producer documents and assets, rendered both 7-second edits through its unchanged renderer, and passed its existing verifier. Replacing the middle scene preserved the outer take IDs and asset hashes. A stale dependency blocked compilation until an explicit editorial acceptance. The shared 22-case validator corpus matched: seven accepted and fifteen rejected.
+Live requests confirmed HTTP 401 for missing/invalid tokens and normal handler responses only with a valid token on v2 planning, approval, results and cancellation. Capability/schema discovery remains public. `integration_publish_gcs: false` selects local file assets; deployed configurations retain GCS publication by default.
 
-Local evidence is under `/Users/magos/.codex/worktrees/ttv-media-integration/media-pilot-commitable`: `acceptance.json`, `contract-parity.json`, `pilot.log`, and `verify-cli.json`. Producer documents are under `/Users/magos/.codex/worktrees/ttv-media-integration/offline-pilot-commitable/handoff`.
+The three-scene job produced a single clip, a three-clip take, and an approved fallback after failure. It retained eight attempts. Targeted middle-scene regeneration retained four attempts. Each job had one worker completion, and duplicate approvals before and after completion returned the same job ID. SQLite job/results remained available after transient RQ records expired. Both edits rendered and passed Media Tooling verification, preserving outer take IDs and hashes and requiring an explicit stale-continuity decision.
+
+The API, worker and dedicated Redis processes were stopped; their loopback ports were checked closed.
+
+## Secondary live provider and storage
+
+One real `veo-3.1-generate-preview` invocation completed through the production factory and generation service: a supplied image, 4 seconds, 1280×720, 24 fps, one attempt, no fallback and no image-generation charges. Its approved ceiling was $2 and its estimate was $1.60; actual USD remains null. Duplicate approval/result collection did not repeat the operation. Media Tooling imported the actual artifact chain, rendered the clip and passed verification. Its silent audio track required the existing `--no-loudnorm` option. [Google pricing](https://ai.google.dev/gemini-api/docs/pricing).
+
+ADC was available, but a read of the configured GCS bucket returned HTTP 403. No smoke objects were created, and upload/download round-trip verification remains unavailable for that identity. No IAM, bucket or production configuration was changed.
+
+## Reproduction and evidence
+
+The provider-free pilot can be reproduced with:
+
+```sh
+python scripts/integration_pilot.py /tmp/ttv-media-pilot
+# In Media Tooling:
+uv run python scripts/ttv_offline_acceptance.py \
+  --handoff /tmp/ttv-media-pilot/handoff \
+  --asset-root /tmp/ttv-media-pilot --project /tmp/ttv-media-edit
+```
+
+The live task evidence directory is `/Users/magos/.codex/worktrees/ttv-media-integration/live-smoke-fprv23t8`. Sanitized evidence includes `after-auth-fix.json`, `queue-dedup.json`, `cleanup.json`, `gcs-readiness.json`, `media-client-fixed/live-acceptance.json`, `media-google-secondary/provider-acceptance.json`, and `h3-provider-2/wire-summary.json`. Canonical provider handoffs and immutable results remain alongside these records. Private logs and credentials are excluded from repository artifacts.
 
 ## Operational limits
 
-- API and workers require the same durable integration filesystem; live Redis/RQ dispatch and GCS transfers were not exercised against deployed services.
-- An interrupted active provider operation requires operator investigation. Its durable submission receipt prevents a new charge under the same operation key. Terminal publication retries are automatic on repeated collection through the execution service.
-- Keyframe review covers the variants represented in its immutable result. A later approved fallback with no reviewed frames stops safely and requires a suitable keyframe result or a fresh full-video approval.
-- v2 planning deterministically derives prompts from editorial intent and the existing provider-duration planner. It does not call the optional LLM prompt enhancer.
-- Standalone/v1 provenance sidecars retain the original invocation and media; they do not invent v2 request/plan/approval documents. Full Media Tooling import uses the v2 artifact chain.
-- Provider billing that lacks a verified USD conversion remains unknown even when raw units are present. Live provider model access, output quality, remote cancellation and actual charges need a separately authorized operational pilot.
+- API and workers require the same durable integration filesystem.
+- An interrupted active provider operation requires operator investigation; its durable receipt prevents replay under the same operation key. Terminal publication can be retried without provider replay.
+- Provider support for ending frames does not schedule one automatically. Supplied `last_frame` references or explicit `integration_generate_last_frame: true` appear in the reviewed plan; an empty `last_frame_prompt` schedules no ending-frame work.
+- A reviewed-keyframe video approval can use only variants represented in that immutable keyframe result.
+- Standalone/v1 provenance sidecars retain their invocation and media; full Media Tooling import uses the v2 request/plan/approval/result chain.

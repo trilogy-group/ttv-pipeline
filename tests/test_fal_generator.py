@@ -83,6 +83,19 @@ def _install_completed_queue(monkeypatch, endpoint, result=None, statuses=None):
     ("configured_model", "actual_model", "duration", "default_input", "expected_fields"),
     [
         (
+            "minimax/h3-max/image-to-video",
+            "minimax/h3-max/image-to-video",
+            5,
+            {"resolution": "768P"},
+            {
+                "duration": 5,
+                "image_url": True,
+                "end_image_url": True,
+                "prompt_expansion_mode": "disabled",
+                "enable_safety_checker": True,
+            },
+        ),
+        (
             "bytedance/seedance-2.0/image-to-video",
             "bytedance/seedance-2.0/image-to-video",
             12,
@@ -228,40 +241,17 @@ def test_submit_is_not_retried_after_ambiguous_network_failure(monkeypatch, tmp_
     assert request.call_count == 1
 
 
-def test_explicitly_rejected_submission_is_retried(monkeypatch, tmp_path):
+def test_submission_rate_limit_requires_a_new_recorded_attempt(monkeypatch, tmp_path):
     first, _ = _images(tmp_path)
-    endpoint = "bytedance/seedance-2.0/image-to-video"
-    request_id = "req_retry"
-    request_base = f"https://queue.fal.run/{endpoint}/requests/{request_id}"
-    responses = iter(
-        [
-            _response(429, {"error": "busy"}, {"X-Fal-Needs-Retry": "true"}),
-            _response(
-                200,
-                {
-                    "request_id": request_id,
-                    "status_url": f"{request_base}/status",
-                    "response_url": f"{request_base}/response",
-                    "cancel_url": f"{request_base}/cancel",
-                },
-            ),
-            _response(200, {"status": "COMPLETED"}),
-            _response(200, {"video": {"url": "https://cdn.example.com/video.mp4"}}),
-        ]
-    )
-    request = Mock(side_effect=lambda *_args, **_kwargs: next(responses))
+    request = Mock(return_value=_response(429, {"error": "busy"}, {"X-Fal-Needs-Retry": "true"}))
     monkeypatch.setattr("generators.remote.fal_generator.requests.request", request)
-    monkeypatch.setattr("generators.remote.fal_generator.time.sleep", lambda *_: None)
-    monkeypatch.setattr("generators.remote.fal_generator.random.uniform", lambda *_: 0)
-    monkeypatch.setattr(
-        "generators.remote.fal_generator.download_file",
-        lambda _url, destination: Path(destination).write_bytes(b"video"),
+    generator = FalGenerator(
+        {"api_key": "test-key", "model": "bytedance/seedance-2.0/image-to-video", "max_retries": 2}
     )
-    generator = FalGenerator({"api_key": "test-key", "model": endpoint, "max_retries": 2})
-
-    generator.generate_video("move", str(first), str(tmp_path / "out.mp4"), 6)
-
-    assert request.call_count == 4
+    with pytest.raises(APIError) as caught:
+        generator.generate_video("move", str(first), str(tmp_path / "out.mp4"), 6)
+    assert caught.value.status_code == 429
+    assert request.call_count == 1
 
 
 def test_veo_first_last_profile_falls_back_to_image_endpoint_without_last_frame(
@@ -353,9 +343,7 @@ def test_timeout_attempts_best_effort_cancellation(monkeypatch, tmp_path):
     assert generator.last_request_metadata["cancellation_requested"] is True
 
 
-def test_in_flight_status_timeout_attempts_best_effort_cancellation(
-    monkeypatch, tmp_path
-):
+def test_in_flight_status_timeout_attempts_best_effort_cancellation(monkeypatch, tmp_path):
     first, _ = _images(tmp_path)
     endpoint = "bytedance/seedance-2.0/image-to-video"
     request_id = "req_timeout"
@@ -424,9 +412,7 @@ def test_keyboard_interrupt_attempts_best_effort_cancellation(monkeypatch, tmp_p
     cancel = Mock(return_value=_response(202, {}))
     monkeypatch.setattr("generators.remote.fal_generator.requests.put", cancel)
     generator = FalGenerator({"api_key": "test-key", "model": endpoint})
-    monkeypatch.setattr(
-        generator, "_wait_for_completion", Mock(side_effect=KeyboardInterrupt)
-    )
+    monkeypatch.setattr(generator, "_wait_for_completion", Mock(side_effect=KeyboardInterrupt))
 
     with pytest.raises(KeyboardInterrupt):
         generator.generate_video("move", str(first), str(tmp_path / "out.mp4"), 6)
@@ -595,3 +581,68 @@ def test_factory_creates_profiled_fal_generator():
     assert generator.model == model
     assert generator.base_url == "https://queue.fal.run"
     assert generator.polling_interval == 2
+
+
+@pytest.mark.parametrize("duration", [5, 5.0])
+def test_h3_max_first_frame_only_preserves_native_profile(monkeypatch, tmp_path, duration):
+    endpoint = "minimax/h3-max/image-to-video"
+    first, _ = _images(tmp_path)
+    calls = _install_completed_queue(monkeypatch, endpoint)
+    generator = create_video_generator("fal", {"fal": {"api_key": "fixture", "model": endpoint}})
+    result = generator.generate_video(
+        "Exact approved prompt", str(first), str(tmp_path / "h3.mp4"), duration=duration
+    )
+    payload = calls[0][2]["json"]
+    assert payload["duration"] == 5 and not isinstance(payload["duration"], str)
+    assert payload["resolution"] == "768P"
+    assert payload["prompt_expansion_mode"] == "disabled"
+    assert payload["enable_safety_checker"] is True
+    assert "end_image_url" not in payload
+    assert result.model == endpoint and result.prompt == "Exact approved prompt"
+    assert result.provider_request_id == "req_123"
+    assert result.billing.raw_units == "6" and result.billing.actual_usd is None
+    assert generator.get_capabilities()["supports_audio"] is True
+    assert generator.get_capabilities()["supports_first_last_frame"] is True
+    assert generator.estimate_cost(5) is None
+    assert generator.validate_inputs("prompt", str(first), 4)
+    assert generator.validate_inputs("prompt", str(first), 16)
+
+
+def test_submission_http_error_does_not_repeat_paid_post(monkeypatch, tmp_path):
+    calls = []
+
+    def rejected(method, url, **kwargs):
+        calls.append(method)
+        return _response(503, {"detail": "upstream unavailable"})
+
+    monkeypatch.setattr("generators.remote.fal_generator.requests.request", rejected)
+    first, _ = _images(tmp_path)
+    generator = FalGenerator(
+        {"api_key": "fixture", "model": "minimax/h3-max/image-to-video", "max_retries": 3}
+    )
+    with pytest.raises(APIError) as caught:
+        generator.generate_video("prompt", str(first), str(tmp_path / "video.mp4"), duration=5)
+    assert caught.value.status_code == 503
+    assert calls == ["POST"]
+
+
+def test_accepted_request_id_survives_invalid_lifecycle_urls(monkeypatch, tmp_path):
+    endpoint = "minimax/h3-max/image-to-video"
+
+    def accepted(method, url, **kwargs):
+        return _response(
+            200,
+            {
+                "request_id": "accepted-request",
+                "status_url": "https://untrusted.example/status",
+                "response_url": "https://untrusted.example/result",
+                "cancel_url": "https://untrusted.example/cancel",
+            },
+        )
+
+    monkeypatch.setattr("generators.remote.fal_generator.requests.request", accepted)
+    first, _ = _images(tmp_path)
+    generator = FalGenerator({"api_key": "fixture", "model": endpoint})
+    with pytest.raises(APIError) as caught:
+        generator.generate_video("prompt", str(first), str(tmp_path / "video.mp4"), duration=5)
+    assert caught.value.generation_output.provider_request_id == "accepted-request"

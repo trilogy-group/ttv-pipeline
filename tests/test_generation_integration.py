@@ -579,3 +579,188 @@ def test_file_execution_stdout_is_only_the_canonical_result(tmp_path, monkeypatc
     streams = capsys.readouterr()
     assert streams.out.encode() == canonical_bytes(svc.result(job["id"]))
     assert "Provider keyframe progress" in streams.err
+
+
+@pytest.mark.parametrize(
+    "method,path",
+    [
+        ("POST", "/v2/plans"),
+        ("GET", "/v2/plans/plan"),
+        ("POST", "/v2/jobs"),
+        ("GET", "/v2/jobs/job"),
+        ("GET", "/v2/jobs/job/result"),
+        ("POST", "/v2/jobs/job/cancel"),
+    ],
+)
+def test_v2_middleware_requires_auth_and_protects_cached_documents(method, path):
+    from types import SimpleNamespace
+
+    from api.middleware import (
+        AuthTokenMiddleware,
+        RequestValidationMiddleware,
+        SecurityHeadersMiddleware,
+    )
+
+    app = FastAPI()
+    app.state.config = SimpleNamespace(security=SimpleNamespace(auth_token="fixture-token"))
+    app.add_middleware(RequestValidationMiddleware)
+    app.add_middleware(AuthTokenMiddleware)
+    app.add_middleware(SecurityHeadersMiddleware)
+    app.add_api_route(path, lambda: {"accepted": True}, methods=[method])
+    with TestClient(app) as client:
+        for token in (None, "incorrect"):
+            headers = {"Authorization": f"Bearer {token}"} if token else {}
+            response = client.request(method, path, json={}, headers=headers)
+            assert response.status_code == 401
+        headers = {"Authorization": "Bearer fixture-token"}
+        response = client.request(method, path, json={}, headers=headers)
+        assert response.status_code == 200
+        assert "no-store" in response.headers["cache-control"]
+        if method == "POST":
+            assert client.post(path, content="plain text", headers=headers).status_code == 415
+
+
+def test_v2_contract_discovery_is_public_with_auth_enabled():
+    from types import SimpleNamespace
+
+    from api.middleware import AuthTokenMiddleware
+
+    app = FastAPI()
+    app.state.config = SimpleNamespace(security=SimpleNamespace(auth_token="fixture-token"))
+    app.add_middleware(AuthTokenMiddleware)
+    for path in ("/v2/capabilities", "/v2/schemas/schema-hashes.json"):
+        app.add_api_route(path, lambda: {"contract_version": "1.0"}, methods=["GET"])
+        with TestClient(app) as client:
+            assert client.get(path).status_code == 200
+
+
+def test_http_local_publishing_is_explicit_and_preserves_gcs_default(tmp_path):
+    from types import SimpleNamespace
+
+    from api.routes.generation import service as http_service
+
+    config = SimpleNamespace(
+        pipeline_config={"integration_root": str(tmp_path), "integration_publish_gcs": False},
+        gcs=SimpleNamespace(
+            bucket="configured-bucket", prefix="configured-prefix", credentials_path=None
+        ),
+    )
+    http_request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(config=config)))
+    local = http_service(http_request)
+    assert local.config["gcs_bucket"] is None
+    FakeProvider.calls = []
+    local.config.update(default_backend="long", integration_providers=["short", "failing"])
+    local.generator_factory = lambda name, config: FakeProvider(name)
+    local.keyframe_generator = keyframe
+    plan = local.plan(request())
+    result = local.run(local.approve(approval(plan))["id"])
+    assert result["terminal_status"] == "succeeded"
+    assert all(
+        clip["asset"]["uri"].startswith("file://")
+        for scene in result["scenes"]
+        for clip in scene["clips"]
+    )
+    del config.pipeline_config["integration_publish_gcs"]
+    assert http_service(http_request).config["gcs_bucket"] == "configured-bucket"
+
+
+def test_unknown_veo_price_requires_explicit_approval(tmp_path, monkeypatch):
+    from generators.remote.veo3_generator import Veo3Generator
+
+    monkeypatch.setattr(Veo3Generator, "_init_clients", lambda self: None)
+    svc = GenerationService(
+        tmp_path,
+        {
+            "default_backend": "veo3",
+            "google_veo": {"project_id": "fixture", "veo_model": "unknown-model"},
+        },
+    )
+    req = request()
+    req["scenes"] = [req["scenes"][0]]
+    req["scenes"][0]["generation_policy"]["provider_preferences"] = ["veo3"]
+    plan = svc.plan(seal(req))
+    assert plan["scenes"][0]["variants"][0]["estimated_cost"]["amount"] is None
+    ap = approval(plan)
+    ap["allow_unknown_cost"] = False
+    with pytest.raises(ValueError, match="Unknown cost"):
+        svc.approve(seal(ap))
+    with svc.db() as db:
+        assert db.execute("SELECT COUNT(*) FROM provider_calls").fetchone()[0] == 0
+
+
+@pytest.mark.parametrize("include_last", [False, True])
+def test_optional_last_frame_uses_approved_plan_without_image_calls(tmp_path, include_last):
+    from api.generation_service import file_hash
+
+    svc = service(tmp_path)
+    frame = tmp_path / "reference.png"
+    keyframe("", frame, None)
+    req = request()
+    req["scenes"] = [req["scenes"][0]]
+    assets = [
+        {
+            "asset_id": "first",
+            "uri": frame.as_uri(),
+            "sha256": file_hash(frame),
+            "mime_type": "image/png",
+            "role": "first_frame",
+            "rights_note": None,
+        }
+    ]
+    if include_last:
+        assets.append({**assets[0], "asset_id": "last", "role": "last_frame"})
+    req["scenes"][0]["reference_assets"] = assets
+    factory = svc.generator_factory
+
+    def capable(name, config):
+        generator = factory(name, config)
+        original = generator.get_capabilities
+        generator.get_capabilities = lambda: {**original(), "supports_first_last_frame": True}
+        return generator
+
+    svc.generator_factory = capable
+    svc.keyframe_generator = lambda *args: pytest.fail(
+        "Supplied frame execution must make zero image calls"
+    )
+    plan = svc.plan(seal(req))
+    shot = plan["scenes"][0]["variants"][0]["shots"][0]
+    assert bool(shot["last_frame_prompt"]) is include_last
+    assert plan["scenes"][0]["variants"][0]["capability_snapshot"]["supports_last_frame"] is True
+    ap = approval(plan)
+    ap["allow_unknown_cost"] = False
+    result = svc.run(svc.approve(seal(ap))["id"])
+    assert result["terminal_status"] == "succeeded"
+    assert len(result["scenes"][0]["attempts"]) == 1
+    assert [k["position"] for k in result["scenes"][0]["keyframes"]] == (
+        ["first", "last"] if include_last else ["first"]
+    )
+
+
+def test_provider_http_failure_retains_status_without_response_secrets(tmp_path):
+    from video_generator_interface import APIError
+
+    svc = service(tmp_path)
+    req = request()
+    req["scenes"] = [req["scenes"][0]]
+    req["scenes"][0]["generation_policy"]["allow_provider_fallback"] = False
+    factory = svc.generator_factory
+
+    def rejected(name, config):
+        generator = factory(name, config)
+
+        def fail(**kwargs):
+            raise APIError(
+                "private authorization response", status_code=402, response_body="sensitive"
+            )
+
+        generator.generate_video = fail
+        return generator
+
+    svc.generator_factory = rejected
+    result = svc.run(svc.approve(approval(svc.plan(seal(req))))["id"])
+    error = result["scenes"][0]["attempts"][-1]["error"]
+    assert error == {
+        "code": "APIError_HTTP_402",
+        "message": "Provider request failed with HTTP 402.",
+    }
+    assert b"sensitive" not in canonical_bytes(result)

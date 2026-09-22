@@ -13,12 +13,15 @@ import requests
 
 from generators.base import ImageValidator, download_file
 from video_generator_interface import (
-    recorded_generation, set_generation_details, BillingObservation, GenerationOutput,
     APIError,
+    BillingObservation,
+    GenerationOutput,
     GenerationTimeoutError,
     InvalidInputError,
     VideoGenerationError,
     VideoGeneratorInterface,
+    recorded_generation,
+    set_generation_details,
 )
 
 
@@ -33,6 +36,7 @@ class FalModelProfile:
     option_values: tuple[tuple[str, tuple[Any, ...] | None], ...] = ()
     image_endpoint: str | None = None
     first_last_endpoint: str | None = None
+    supports_audio: bool = False
 
     @property
     def options(self) -> dict[str, tuple[Any, ...] | None]:
@@ -81,6 +85,21 @@ def _veo_profile(endpoint: str, image_endpoint: str, first_last_endpoint: str) -
 
 
 FAL_MODEL_PROFILES = {
+    "minimax/h3-max/image-to-video": FalModelProfile(
+        endpoint="minimax/h3-max/image-to-video",
+        durations=tuple(range(5, 16)),
+        duration_encoding="integer",
+        first_frame_field="image_url",
+        last_frame_field="end_image_url",
+        supports_audio=True,
+        option_values=(
+            ("resolution", ("480P", "768P", "1080P")),
+            ("prompt_expansion_mode", ("disabled", "balanced", "quality")),
+            ("enable_safety_checker", (True, False)),
+            ("sync_mode", (False,)),
+            ("seed", None),
+        ),
+    ),
     "bytedance/seedance-2.0/image-to-video": FalModelProfile(
         endpoint="bytedance/seedance-2.0/image-to-video",
         durations=SEEDANCE_DURATIONS,
@@ -193,14 +212,15 @@ class FalGenerator(VideoGeneratorInterface):
                 profile.last_frame_field or profile.first_last_endpoint
             ),
             "supports_text_to_video": False,
-            "supports_audio": "generate_audio" in profile.options,
+            "supports_audio": profile.supports_audio or "generate_audio" in profile.options,
             "requires_gpu": False,
             "api_based": True,
             "provider_model_separation": True,
         }
 
-    def estimate_cost(self, duration: float, resolution: str = "1280x720") -> float:
-        return 0.0
+    def estimate_cost(self, duration: float, resolution: str = "1280x720") -> float | None:
+        # Endpoint/resolution promotions are not verified USD billing observations.
+        return None
 
     def validate_inputs(
         self, prompt: str, input_image_path: str, duration: float | None
@@ -268,10 +288,21 @@ class FalGenerator(VideoGeneratorInterface):
             None if duration is None else int(duration),
             kwargs.get("fal_input", {}),
         )
-        set_generation_details(model=profile.endpoint, prompt=payload["prompt"],
-            reference_paths=tuple(p for p in (input_image_path, last_frame_path if profile.last_frame_field else None) if p),
-            parameters={k: v for k, v in payload.items() if k not in {"prompt", profile.first_frame_field, profile.last_frame_field}},
-            seed=payload.get("seed"))
+        set_generation_details(
+            model=profile.endpoint,
+            prompt=payload["prompt"],
+            reference_paths=tuple(
+                p
+                for p in (input_image_path, last_frame_path if profile.last_frame_field else None)
+                if p
+            ),
+            parameters={
+                k: v
+                for k, v in payload.items()
+                if k not in {"prompt", profile.first_frame_field, profile.last_frame_field}
+            },
+            seed=payload.get("seed"),
+        )
         headers = self._headers()
         submit_url = f"{self.base_url}/{profile.endpoint}"
         deadline = time.monotonic() + self.timeout
@@ -283,15 +314,16 @@ class FalGenerator(VideoGeneratorInterface):
             safe_to_retry=False,
             deadline=deadline,
         )
+        # Retain acceptance before parsing URLs: an accepted request must never be resubmitted.
+        if isinstance(submission.get("request_id"), str) and submission["request_id"]:
+            set_generation_details(provider_request_id=submission["request_id"])
         lifecycle = self._parse_submission(submission, profile.endpoint)
         self.last_request_metadata = lifecycle.copy()
         set_generation_details(provider_request_id=lifecycle["request_id"])
         cancellation_check = kwargs.get("cancellation_check")
 
         try:
-            status = self._wait_for_completion(
-                lifecycle, headers, deadline, cancellation_check
-            )
+            status = self._wait_for_completion(lifecycle, headers, deadline, cancellation_check)
             result, response = self._request_json(
                 "GET",
                 lifecycle["response_url"],
@@ -299,7 +331,7 @@ class FalGenerator(VideoGeneratorInterface):
                 safe_to_retry=True,
                 deadline=deadline,
             )
-        except (GenerationTimeoutError, InterruptedError, KeyboardInterrupt):
+        except GenerationTimeoutError, InterruptedError, KeyboardInterrupt:
             self._cancel(lifecycle["cancel_url"], headers)
             raise
 
@@ -324,9 +356,14 @@ class FalGenerator(VideoGeneratorInterface):
         if billable_units is not None:
             self.last_request_metadata["billable_units"] = billable_units
 
-        set_generation_details(seed=result.get("seed", payload.get("seed")),
-            billing=BillingObservation(raw_unit_name="X-Fal-Billable-Units" if billable_units is not None else None,
-                                       raw_units=billable_units))
+        set_generation_details(
+            seed=result.get("seed", payload.get("seed")),
+            prompt=result.get("expanded_prompt") or payload["prompt"],
+            billing=BillingObservation(
+                raw_unit_name="X-Fal-Billable-Units" if billable_units is not None else None,
+                raw_units=billable_units,
+            ),
+        )
         download_file(video["url"], output_path)
         return output_path
 
@@ -358,6 +395,13 @@ class FalGenerator(VideoGeneratorInterface):
         if not isinstance(request_input, dict):
             raise InvalidInputError("fal_input must be an object")
         options = {**self.default_input, **request_input}
+        if profile.endpoint == "minimax/h3-max/image-to-video":
+            options = {
+                "resolution": "768P",
+                "prompt_expansion_mode": "disabled",
+                "enable_safety_checker": True,
+                **options,
+            }
         unsupported = sorted(set(options) - set(profile.options))
         if unsupported:
             raise InvalidInputError(
@@ -379,6 +423,8 @@ class FalGenerator(VideoGeneratorInterface):
             payload[profile.last_frame_field] = self._image_to_data_uri(last_frame_path)
         if profile.duration_encoding == "integer_or_auto":
             payload["duration"] = "auto" if duration is None else duration
+        elif duration is not None and profile.duration_encoding == "integer":
+            payload["duration"] = int(duration)
         elif duration is not None and profile.duration_encoding == "seconds":
             payload["duration"] = f"{duration}s"
         elif duration is not None and profile.duration_encoding == "string":
@@ -447,7 +493,7 @@ class FalGenerator(VideoGeneratorInterface):
                 return data, response
 
             retryable = self._is_retryable(response)
-            if retryable and attempt < self.max_retries - 1:
+            if safe_to_retry and retryable and attempt < self.max_retries - 1:
                 self._sleep_before_retry(attempt, response, deadline)
                 continue
             raise self._api_error(response)
@@ -538,10 +584,10 @@ class FalGenerator(VideoGeneratorInterface):
             return None
         try:
             return max(0.0, float(value))
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             try:
                 return max(0.0, parsedate_to_datetime(str(value)).timestamp() - time.time())
-            except (TypeError, ValueError, OverflowError):
+            except TypeError, ValueError, OverflowError:
                 return None
 
     def _is_retryable(self, response: requests.Response) -> bool:

@@ -91,14 +91,16 @@ minimax:
 
 # Remote API configuration - fal.ai
 fal:
-  api_key: "YOUR_FAL_KEY"                     # Required unless FAL_KEY is set; FAL_API_KEY remains a compatibility fallback
-  model: "bytedance/seedance-2.0/image-to-video"
+  # Set FAL_KEY or FAL_API_KEY in the process environment.
+  model: "minimax/h3-max/image-to-video"
   base_url: "https://queue.fal.run"
   queue_start_timeout: 300                     # Maximum queue wait before fal starts processing
   default_input:                               # Only documented fields for the selected profile are accepted
-    resolution: "720p"
-    aspect_ratio: "16:9"
+    resolution: "768P"
+    prompt_expansion_mode: "disabled"            # Keep the reviewed prompt unchanged
+    enable_safety_checker: true
 # Supported profiles:
+# - minimax/h3-max/image-to-video (5-15 integer seconds; optional ending frame)
 # - bytedance/seedance-2.0/image-to-video
 # - bytedance/seedance-2.0/fast/image-to-video
 # - fal-ai/veo3.1/image-to-video

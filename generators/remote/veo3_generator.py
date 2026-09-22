@@ -155,10 +155,21 @@ class Veo3Generator(VideoGeneratorInterface):
             }
         }
     
-    def estimate_cost(self, duration: float, resolution: str = "1920x1080") -> float:
-        """Estimate cost for video generation"""
-        price_per_second = self.PRICING.get(self.model_name, 0.10)
-        return duration * price_per_second
+    def estimate_cost(self, duration: float, resolution: str | None = None) -> float | None:
+        """Estimate the configured resolution; unrecognized pricing remains unknown."""
+        resolution = resolution or self.config.get("resolution", "720p")
+        resolution = {"1280x720": "720p", "1920x1080": "1080p", "3840x2160": "4k"}.get(resolution, resolution)
+        # Gemini Developer API pricing: https://ai.google.dev/gemini-api/docs/pricing
+        preview_prices = {
+            self.API_MODEL_NAME: {"720p": 0.40, "1080p": 0.40, "4k": 0.60},
+            self.API_FAST_MODEL_NAME: {"720p": 0.10, "1080p": 0.12, "4k": 0.30},
+            "veo-3.1-lite-generate-preview": {"720p": 0.05, "1080p": 0.08},
+        }
+        if self.model_name in preview_prices:
+            rate = preview_prices[self.model_name].get(resolution)
+        else:
+            rate = self.PRICING.get(self.model_name) if resolution in {"720p", "1080p"} else None
+        return duration * rate if rate is not None else None
     
     def validate_inputs(self, 
                        prompt: str, 
@@ -237,7 +248,10 @@ class Veo3Generator(VideoGeneratorInterface):
         
         # Log cost estimate
         estimated_cost = self.estimate_cost(duration)
-        self.logger.info(f"Estimated cost: ${estimated_cost:.2f}")
+        if estimated_cost is None:
+            self.logger.info("Estimated cost unavailable")
+        else:
+            self.logger.info(f"Estimated cost: ${estimated_cost:.2f}")
         
         # Ensure output directory exists
         os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)

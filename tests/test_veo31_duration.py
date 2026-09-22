@@ -686,3 +686,17 @@ def test_cli_rejects_unsupported_duration_before_generation():
             run_pipeline("config.yaml", duration_seconds=6)
 
     enhance_prompt.assert_not_called()
+
+
+@pytest.mark.parametrize("model,resolution,expected", [
+    ("veo-3.1-generate-preview", "720p", 1.6),
+    ("veo-3.1-generate-preview", "4k", 2.4),
+    ("veo-3.1-fast-generate-preview", "1080p", 0.48),
+    ("veo-3.1-fast-generate-preview", "4k", 1.2),
+    ("unknown-model", "720p", None),
+    ("veo-3.1-generate-preview", "unknown-resolution", None),
+])
+def test_veo_estimate_respects_resolution_and_unknown_price(model, resolution, expected):
+    with patch.object(Veo3Generator, "_init_clients"):
+        generator = Veo3Generator({"project_id": "fixture", "veo_model": model, "resolution": resolution})
+    assert generator.estimate_cost(4) == expected

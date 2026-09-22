@@ -158,7 +158,7 @@ class VideoGeneratorInterface(ABC):
         pass
     
     @abstractmethod
-    def estimate_cost(self, duration: float, resolution: str = "1280x720") -> float:
+    def estimate_cost(self, duration: float, resolution: str = "1280x720") -> float | None:
         """
         Estimate cost for video generation
         
@@ -167,7 +167,7 @@ class VideoGeneratorInterface(ABC):
             resolution: Video resolution (e.g., "1280x720")
             
         Returns:
-            Estimated cost in USD (0.0 for local models)
+            Estimated cost in USD (0.0 for local models), or None when unknown
         """
         pass
     

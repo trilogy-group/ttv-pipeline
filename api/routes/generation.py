@@ -21,7 +21,7 @@ def service(request):
         raise HTTPException(503, "Pipeline configuration unavailable")
     pipeline = dict(config.pipeline_config)
     pipeline.update(
-        gcs_bucket=config.gcs.bucket,
+        gcs_bucket=(config.gcs.bucket if pipeline.get("integration_publish_gcs", True) else None),
         gcs_prefix=config.gcs.prefix,
         credentials_path=config.gcs.credentials_path,
     )

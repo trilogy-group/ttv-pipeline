@@ -250,6 +250,10 @@ class GenerationService:
                 if any(not a["mime_type"].startswith("image/") for a in scene["reference_assets"]):
                     warnings.append("This provider path accepts image references only.")
                     continue
+                supplied_last = any(a["role"] == "last_frame" for a in scene["reference_assets"])
+                if supplied_last and not cap["capability_snapshot"]["supports_last_frame"]:
+                    warnings.append("Supplied ending frame requires a compatible provider variant.")
+                    continue
                 durations = cap["capability_snapshot"]["allowed_durations_s"]
                 if any(int(d) != d for d in durations):
                     continue
@@ -296,7 +300,15 @@ class GenerationService:
                             ),
                             "prompt_snapshot": prompt,
                             "first_frame_prompt": scene["intent"]["entry_state"] or prompt,
-                            "last_frame_prompt": scene["intent"]["exit_state"] or prompt,
+                            "last_frame_prompt": (
+                                (scene["intent"]["exit_state"] or prompt)
+                                if cap["capability_snapshot"]["supports_last_frame"]
+                                and (
+                                    self.config.get("integration_generate_last_frame", False)
+                                    or (supplied_last and i == len(lengths) - 1)
+                                )
+                                else ""
+                            ),
                             "reference_asset_ids": sorted(refs),
                         }
                     )
@@ -813,7 +825,11 @@ class GenerationService:
                             if recorded["asset_id"] == asset["asset_id"]:
                                 recorded["uri"] = snapshot["uri"]
                     reference_directory = None
-                    extra_references = [a for a in scene_references if a["role"] != "first_frame"]
+                    extra_references = [
+                        a
+                        for a in scene_references
+                        if a["role"] not in {"first_frame", "last_frame"}
+                    ]
                     if extra_references:
                         if (
                             not self.keyframe_generator
@@ -890,13 +906,26 @@ class GenerationService:
                                     None,
                                 )
                                 reference = previous_frame or supplied
+                                supplied_last = next(
+                                    (
+                                        refs[a["asset_id"]]
+                                        for a in scene_references
+                                        if a["role"] == "last_frame"
+                                    ),
+                                    None,
+                                )
                                 for position in (
-                                    ("first", "last") if cap["supports_last_frame"] else ("first",)
+                                    ("first", "last")
+                                    if cap["supports_last_frame"] and shot["last_frame_prompt"]
+                                    else ("first",)
                                 ):
                                     if self.job(job_id)["cancel_requested"]:
                                         break
-                                    if position == "first" and reference:
-                                        path = reference
+                                    supplied_frame = (
+                                        reference if position == "first" else supplied_last
+                                    )
+                                    if supplied_frame:
+                                        path = supplied_frame
                                     else:
                                         if not approval["allow_unknown_cost"]:
                                             raise ValueError(
@@ -1059,7 +1088,7 @@ class GenerationService:
                                             "position": position,
                                             "attempt_id": (
                                                 None
-                                                if position == "first" and reference
+                                                if supplied_frame
                                                 else image_attempt["attempt_id"]
                                             ),
                                             "asset": asset,
@@ -1121,9 +1150,20 @@ class GenerationService:
                                 raise
                             except Exception as caught:
                                 output = getattr(caught, "generation_output", None)
+                                status = getattr(caught, "status_code", None)
+                                status = (
+                                    status
+                                    if isinstance(status, int) and 100 <= status <= 599
+                                    else None
+                                )
                                 error = {
-                                    "code": type(caught).__name__,
-                                    "message": "Provider call failed; see private worker diagnostics.",
+                                    "code": type(caught).__name__
+                                    + (f"_HTTP_{status}" if status else ""),
+                                    "message": (
+                                        f"Provider request failed with HTTP {status}."
+                                        if status
+                                        else "Provider call failed; see private worker diagnostics."
+                                    ),
                                 }
                             billing = (
                                 asdict(output.billing)
