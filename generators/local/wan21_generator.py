@@ -8,6 +8,7 @@ import subprocess
 import tempfile
 from typing import Dict, Any, List, Optional
 from video_generator_interface import (
+    recorded_generation, set_generation_details, BillingObservation, GenerationOutput,
     VideoGeneratorInterface, 
     VideoGenerationError,
     InvalidInputError
@@ -83,12 +84,13 @@ class Wan21Generator(VideoGeneratorInterface):
         
         return errors
     
+    @recorded_generation("wan2.1")
     def generate_video(self, 
                       prompt: str, 
                       input_image_path: str,
                       output_path: str,
                       duration: float = 5.0,
-                      **kwargs) -> str:
+                      **kwargs) -> GenerationOutput:
         """
         Generate video using Wan2.1 I2V model
         
@@ -106,37 +108,15 @@ class Wan21Generator(VideoGeneratorInterface):
         # Build the command
         cmd = self._build_command(prompt, input_image_path, output_path, **kwargs)
         
-        # Execute with retries
-        for attempt in range(self.max_retries):
-            try:
-                self.logger.info(f"Generating video (attempt {attempt + 1}/{self.max_retries})")
-                self._run_command(cmd)
-                
-                # Verify output exists
-                if os.path.exists(output_path) and os.path.getsize(output_path) > 10000:
-                    self.logger.info(f"Successfully generated video: {output_path}")
-                    return output_path
-                else:
-                    raise VideoGenerationError("Generated video file is missing or too small")
-                    
-            except subprocess.CalledProcessError as e:
-                if attempt < self.max_retries - 1:
-                    self.logger.warning(f"Generation failed, retrying with reduced parameters...")
-                    # Try with reduced parameters on retry
-                    cmd = self._build_command(
-                        prompt, input_image_path, output_path,
-                        sample_steps=30, guide_scale=3.0, **kwargs
-                    )
-                else:
-                    raise VideoGenerationError(f"Video generation failed after {self.max_retries} attempts: {e}")
-            except Exception as e:
-                if attempt < self.max_retries - 1:
-                    self.logger.warning(f"Error on attempt {attempt + 1}: {e}")
-                else:
-                    raise
-        
-        raise VideoGenerationError("Failed to generate video after all retries")
-    
+        set_generation_details(model="i2v-14B", parameters={
+            "size": self.size, "sample_guide_scale": kwargs.get("guide_scale", self.guide_scale),
+            "sample_steps": kwargs.get("sample_steps", self.sample_steps), "sample_shift": self.sample_shift,
+            "frame_num": self.frame_num}, billing=BillingObservation(estimated_usd=0.0))
+        self._run_command(cmd)
+        if not os.path.exists(output_path) or os.path.getsize(output_path) <= 10000:
+            raise VideoGenerationError("Generated video file is missing or too small")
+        return output_path
+
     def _build_command(self, 
                       prompt: str, 
                       input_image_path: str,

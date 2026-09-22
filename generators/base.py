@@ -127,7 +127,7 @@ class ImageValidator:
         
         with Image.open(image_path) as img:
             # Convert to RGB if necessary
-            if img.mode not in ["RGB", "RGBA"]:
+            if img.mode != "RGB":
                 img = img.convert("RGB")
             
             # Resize if target size specified
@@ -135,7 +135,8 @@ class ImageValidator:
                 img = img.resize(target_size, Image.Resampling.LANCZOS)
             
             # Save to temporary file with optimization
-            temp_path = os.path.join(tempfile.gettempdir(), f"prepared_{os.path.basename(image_path)}")
+            with tempfile.NamedTemporaryFile(prefix="ttv-prepared-", suffix=".jpg", delete=False) as temporary:
+                temp_path = temporary.name
             
             # Try different quality levels to meet size requirement
             for quality in [95, 90, 85, 80, 70]:

@@ -54,6 +54,9 @@ dev = [
 [tool.setuptools]
 py-modules = ["frame_extractor", "keyframe_generator", "pipeline", "video_generator_interface"]
 
+[tool.setuptools.package-data]
+api = ["contracts/v1_0/*.json", "contracts/v1_0/*.md", "contracts/v1_0/fixtures/*.json"]
+
 [tool.setuptools.packages.find]
 include = ["api*", "generators*", "workers*"]
 

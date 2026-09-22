@@ -333,3 +333,37 @@ Contributions are welcome! Please open an issue or submit a pull request.
 ## License
 
 This project is licensed under the MIT License.
+
+### Media Tooling integration
+
+Start with [`examples/pipeline_config.h3-max.yaml`](examples/pipeline_config.h3-max.yaml) for MiniMax H3 Max through the production fal.ai backend. Set `FAL_KEY` or `FAL_API_KEY` in the environment. The exact endpoint is `minimax/h3-max/image-to-video`; it accepts integer durations from 5 through 15 seconds and `480P`, `768P` or `1080P` output. Its default prompt expansion is disabled in TTV so the reviewed prompt is submitted unchanged. Supply an image AssetRef with role `first_frame`; an optional ending image uses role `last_frame`. An empty planned `last_frame_prompt` means no ending-image operation. `integration_generate_last_frame: true` explicitly includes synthesized ending frames in new plans.
+
+The transport-neutral generation contract is available under `api/contracts/v1_0` and through `GET /v2/schemas/{name}`. Media Tooling vendors that directory and pins `schema-hashes.json`; the repositories share no runtime imports.
+
+Set `AUTH_TOKEN` to protect v1/v2 plans, jobs, results and cancellation. Capability and schema discovery remain public. Use `POST /v2/plans` with a hashed `GenerationRequest`, review the returned provider variants, then submit a hashed `PlanApproval` to `POST /v2/jobs`. Approvals bind the exact plan hash, allowed variants, keyframe/video mode and budget. Unknown estimates are null and require explicit `allow_unknown_cost`. `GET /v2/jobs/{id}/result` returns the immutable terminal attempt ledger, source clips, keyframes and take dependencies. Provider inputs and outputs are retained by content hash, including prepared reference images. Cancellation retains completed artifacts and attempts. Regeneration requests include only the scenes being replaced and identify prior result/take IDs.
+
+Planning derives reviewed prompts directly from scene intent and reuses the existing provider-duration planner. The v2 path performs deterministic decomposition. Provider support for an ending frame does not itself schedule a paid image call. A reviewed-keyframe video approval can execute only variants whose frames exist in the referenced keyframe result.
+
+File handoff uses the same service and canonical JSON:
+
+```sh
+python -m api.generation_handoff --root ./generation-data --config pipeline_config.yaml plan request.json > plan.json
+python -m api.generation_handoff --root ./generation-data --config pipeline_config.yaml approve approval.json > job.json
+python -m api.generation_handoff --root ./generation-data --config pipeline_config.yaml run JOB_ID > result.json
+python -m api.generation_handoff --root ./generation-data result JOB_ID
+```
+
+Configure `integration_root` (or `TTV_INTEGRATION_ROOT` for the API) as a durable shared filesystem directory accessible to the API and its workers. Set `integration_publish_gcs: false` for local HTTP operation with `file://` assets; deployed API configurations retain GCS publication by default. External input files require an explicit absolute directory in `integration_asset_roots`; external GCS inputs require an allowed `gs://bucket/prefix/` in `integration_asset_uri_prefixes`. Assets under the integration root and configured output GCS prefix are accepted automatically. SQLite records and idempotency bindings have no job TTL. Each paid operation claims a deterministic job/shot/stage key before submission and persists provider request IDs as soon as they arrive. Known or uncertain submissions cannot be submitted again under that key. Provider configuration is frozen at plan time; credentials are restored from the worker's deployment configuration. API deployments publish assets through the existing GCS uploader; local mode emits `file://` assets. A worker interrupted after provider submission must be investigated before restarting that job: active jobs are never automatically replayed as another paid request. Terminal result persistence and job completion are atomic; publication can be retried without replaying providers.
+
+The existing v1/standalone invocation remains available and writes provenance sidecars under `generation-data/legacy/<job-id>/result.json`. These describe the original invocation and preserve source files independently of worker temporary-directory cleanup. They do not create v2 approval records. Stitched outputs are scene previews; Media Tooling renders the final editorial selection from individual source clips.
+
+Run the deterministic offline pilot without credentials or provider charges:
+
+```sh
+python scripts/integration_pilot.py /tmp/ttv-media-pilot
+python -m pytest tests/test_generation_integration.py tests/test_fal_generator.py tests/test_veo31_duration.py tests/test_keyframe_checkpoints.py
+```
+
+The pilot emits a single-clip scene, a multi-clip scene, an approved fallback after failure, a continuity dependency and a targeted middle-scene replacement. Its handoff directory contains the actual storyboard, requests, plans, approvals and results for import into Media Tooling.
+
+Validation commands, baseline comparisons and operational limits are recorded in [integration validation](docs/media-tooling-integration-validation.md).

@@ -10,6 +10,7 @@ import logging
 from typing import Dict, Any, List, Optional
 from runwayml import RunwayML
 from video_generator_interface import (
+    recorded_generation, set_generation_details, BillingObservation, GenerationOutput,
     VideoGeneratorInterface, 
     VideoGenerationError,
     APIError,
@@ -35,6 +36,8 @@ class RunwayMLGenerator(VideoGeneratorInterface):
         "gen-4": 0.08,           # $0.08 per second
         "gen4_turbo": 0.03       # $0.03 per second
     }
+    RATIOS = {"16:9": "1280:720", "9:16": "720:1280", "1:1": "960:960",
+              "4:3": "1104:832", "3:4": "832:1104", "21:9": "1584:672"}
     
     def __init__(self, config: Dict[str, Any]):
         super().__init__(config)
@@ -57,7 +60,7 @@ class RunwayMLGenerator(VideoGeneratorInterface):
         
         # Initialize Runway client (SDK will read from environment variable)
         try:
-            self.client = RunwayML()
+            self.client = RunwayML(max_retries=0)
         except Exception as e:
             raise VideoGenerationError(f"Failed to initialize Runway client: {e}")
             
@@ -105,7 +108,7 @@ class RunwayMLGenerator(VideoGeneratorInterface):
             "832:1104": 1.2,     # 3:4 portrait
             "1584:672": 1.5      # 21:9 ultrawide
         }
-        multiplier = resolution_multipliers.get(resolution, 1.0)
+        multiplier = resolution_multipliers.get(self.RATIOS.get(resolution, resolution), 1.0)
         
         return duration * price_per_second * multiplier
     
@@ -135,12 +138,13 @@ class RunwayMLGenerator(VideoGeneratorInterface):
         
         return errors
     
+    @recorded_generation("runway")
     def generate_video(self, 
                       prompt: str, 
                       input_image_path: str,
                       output_path: str,
                       duration: float = 5.0,
-                      **kwargs) -> str:
+                      **kwargs) -> GenerationOutput:
         """Generate video using Runway ML API"""
         # Validate inputs
         validation_errors = self.validate_inputs(prompt, input_image_path, duration)
@@ -148,7 +152,8 @@ class RunwayMLGenerator(VideoGeneratorInterface):
             raise InvalidInputError(f"Input validation failed: {'; '.join(validation_errors)}")
         
         # Log cost estimate
-        estimated_cost = self.estimate_cost(duration)
+        ratio = kwargs.get("aspect_ratio", self.default_ratio)
+        estimated_cost = self.estimate_cost(duration, ratio)
         self.logger.info(f"Estimated cost: ${estimated_cost:.2f}")
         
         try:
@@ -158,7 +163,7 @@ class RunwayMLGenerator(VideoGeneratorInterface):
                 base64_image = base64.b64encode(f.read()).decode("utf-8")
             
             # Determine aspect ratio from kwargs or use default
-            ratio = kwargs.get("aspect_ratio", self.default_ratio)
+            ratio = self.RATIOS.get(ratio, ratio)
             
             # Create the image-to-video task
             self.logger.info(f"Creating video generation task with model {self.model_version}...")
@@ -178,9 +183,13 @@ class RunwayMLGenerator(VideoGeneratorInterface):
                 task_params["seed"] = int(seed)
                 self.logger.info(f"Using seed: {seed}")
             
+            set_generation_details(model=self.model_version, seed=task_params.get("seed"), prompt=prompt,
+                parameters={k: v for k, v in task_params.items() if k not in {"prompt_image", "prompt_text"}},
+                billing=BillingObservation(estimated_usd=estimated_cost))
             task = self.client.image_to_video.create(**task_params)
             
             task_id = task.id
+            set_generation_details(provider_request_id=task_id)
             self.logger.info(f"Task created with ID: {task_id}")
             
             # Poll for completion with progress monitoring

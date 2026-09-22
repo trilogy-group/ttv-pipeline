@@ -690,6 +690,10 @@ def enhance_prompt_data(prompt: str, config: Dict) -> Dict:
 # Pipeline Components
 # ============================================================================
 
+from api.generation_ledger import recorded_local_command
+
+
+@recorded_local_command
 def run_command(cmd: List[str], cwd: str = None) -> str:
     """Run a shell command and return its output"""
     try:
@@ -1086,6 +1090,10 @@ def generate_video_segments(
     print(f"\n{Colors.BOLD}{Colors.PURPLE}Parallel Video Generation:{Colors.RESET}")
     print(f"{Colors.CYAN}Running {parallel_segments} segments in parallel, each using {gpus_per_segment} GPUs{Colors.RESET}")
 
+    from api.generation_ledger import active_ledger
+    if ledger := active_ledger.get():
+        config["_legacy_ledger_directory"] = str(ledger.root)
+        ledger.expected_segments = {prompt["segment"] for prompt in video_prompts}
     # Import multiprocessing here to avoid issues with recursive imports
     import multiprocessing as mp
     from functools import partial
@@ -1139,6 +1147,11 @@ def generate_video_segments(
 
 def process_segment(prompt_item, gpu_ids, wan2_dir, config, output_dir, flf2v_model_dir, frame_num):
     """Process a single segment in a separate process"""
+    from api.generation_ledger import active_ledger, LegacyLedger
+    from pathlib import Path
+    if config.get("_legacy_ledger_directory"):
+        ledger_path = Path(config["_legacy_ledger_directory"])
+        active_ledger.set(LegacyLedger(ledger_path.parent, ledger_path.name))
     try:
         return generate_single_video_segment(
             wan2_dir=wan2_dir,
@@ -1658,7 +1671,7 @@ def generate_video_chaining_mode(
                     logging.error(f"Input validation failed for segment {seg} with {attempt_generator.get_backend_name()}: {validation_errors}")
                     raise InvalidInputError(f"Validation failed: {'; '.join(validation_errors)}")
 
-                generated_video_path = attempt_generator.generate_video(
+                generation_output = attempt_generator.generate_video(
                     prompt=prompt_text,
                     input_image_path=input_image,
                     output_path=video_file_output_path,
@@ -1666,6 +1679,7 @@ def generate_video_chaining_mode(
                     frame_num=config.get("frame_num", 81) # Pass frame_num from main config if available
                 )
 
+                generated_video_path = os.fspath(generation_output)
                 if not generated_video_path or not os.path.exists(generated_video_path):
                     raise VideoGenerationError(f"Generator {attempt_generator.get_backend_name()} reported success but video file not found: {generated_video_path}")
 
@@ -1714,6 +1728,10 @@ def generate_video_chaining_mode(
 # Main Pipeline Function
 # ============================================================================
 
+from api.generation_ledger import legacy_provenance
+
+
+@legacy_provenance
 def run_pipeline(
     config_path: str,
     prompt_override: str = None,

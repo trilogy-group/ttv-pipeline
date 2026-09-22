@@ -32,6 +32,7 @@ except ImportError:
 from google.cloud import storage
 from google.oauth2 import service_account
 from video_generator_interface import (
+    recorded_generation, set_generation_details, replace_generation_reference, BillingObservation, GenerationOutput,
     VideoGeneratorInterface,
     VideoGenerationError,
     InvalidInputError,
@@ -139,6 +140,7 @@ class Veo3Generator(VideoGeneratorInterface):
             "supported_durations": self.SUPPORTED_DURATIONS,
             "supported_resolutions": ["16:9", "9:16"],  # Aspect ratios
             "supports_image_to_video": True,
+            "supports_first_last_frame": True,
             "supports_text_to_video": False,  # Currently only image-to-video
             "requires_gpu": False,  # API-based
             "api_based": True,
@@ -154,10 +156,21 @@ class Veo3Generator(VideoGeneratorInterface):
             }
         }
     
-    def estimate_cost(self, duration: float, resolution: str = "1920x1080") -> float:
-        """Estimate cost for video generation"""
-        price_per_second = self.PRICING.get(self.model_name, 0.10)
-        return duration * price_per_second
+    def estimate_cost(self, duration: float, resolution: str | None = None) -> float | None:
+        """Estimate the configured resolution; unrecognized pricing remains unknown."""
+        resolution = resolution or self.config.get("resolution", "720p")
+        resolution = {"1280x720": "720p", "1920x1080": "1080p", "3840x2160": "4k"}.get(resolution, resolution)
+        # Gemini Developer API pricing: https://ai.google.dev/gemini-api/docs/pricing
+        preview_prices = {
+            self.API_MODEL_NAME: {"720p": 0.40, "1080p": 0.40, "4k": 0.60},
+            self.API_FAST_MODEL_NAME: {"720p": 0.10, "1080p": 0.12, "4k": 0.30},
+            "veo-3.1-lite-generate-preview": {"720p": 0.05, "1080p": 0.08},
+        }
+        if self.model_name in preview_prices:
+            rate = preview_prices[self.model_name].get(resolution)
+        else:
+            rate = self.PRICING.get(self.model_name) if resolution in {"720p", "1080p"} else None
+        return duration * rate if rate is not None else None
     
     def validate_inputs(self, 
                        prompt: str, 
@@ -198,12 +211,13 @@ class Veo3Generator(VideoGeneratorInterface):
         
         return errors
     
+    @recorded_generation("veo3")
     def generate_video(self,
                       prompt: str,
                       input_image_path: str,
                       output_path: str,
                       duration: float = 8.0,
-                      **kwargs) -> str:
+                      **kwargs) -> GenerationOutput:
         """
         Generate video using Google Veo 3 API
         
@@ -225,6 +239,7 @@ class Veo3Generator(VideoGeneratorInterface):
             raise InvalidInputError(f"Input validation failed: {'; '.join(validation_errors)}")
 
         last_frame_path = kwargs.get("last_frame_path")
+        set_generation_details(reference_paths=tuple(p for p in (input_image_path, last_frame_path) if p))
         if last_frame_path:
             last_frame_validation = ImageValidator.validate_image(last_frame_path, max_size_mb=10.0)
             if not last_frame_validation["valid"]:
@@ -234,16 +249,18 @@ class Veo3Generator(VideoGeneratorInterface):
         
         # Log cost estimate
         estimated_cost = self.estimate_cost(duration)
-        self.logger.info(f"Estimated cost: ${estimated_cost:.2f}")
+        if estimated_cost is None:
+            self.logger.info("Estimated cost unavailable")
+        else:
+            self.logger.info(f"Estimated cost: ${estimated_cost:.2f}")
         
         # Ensure output directory exists
         os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
         
         # Get video aspect ratio from config (veo3 only supports 16:9 and 9:16)
-        video_aspect_ratio = self.config.get('video_aspect_ratio', '16:9')
+        video_aspect_ratio = kwargs.get('aspect_ratio', self.config.get('video_aspect_ratio', '16:9'))
         if video_aspect_ratio not in ['16:9', '9:16']:
-            self.logger.warning(f"Invalid video aspect ratio {video_aspect_ratio}, defaulting to 16:9")
-            video_aspect_ratio = '16:9'
+            raise InvalidInputError(f"Unsupported Veo aspect ratio: {video_aspect_ratio}")
         
         self.logger.info(f"Using video aspect ratio: {video_aspect_ratio}")
         
@@ -253,7 +270,7 @@ class Veo3Generator(VideoGeneratorInterface):
                 mime_type = mime_type or "image/jpeg"
                 if self.api_key or kwargs.get("use_local_file", False):
                     return GenAIImage.from_file(location=path, mime_type=mime_type)
-                return GenAIImage(gcs_uri=self._upload_to_gcs(path), mime_type=mime_type)
+                return GenAIImage(gcs_uri=self._upload_to_gcs(path), mime_type="image/jpeg")
 
             image = request_image(input_image_path)
             last_frame = request_image(last_frame_path) if last_frame_path else None
@@ -288,16 +305,13 @@ class Veo3Generator(VideoGeneratorInterface):
                 "prompt": prompt,
                 "config": config,
             }
-            if self.api_key:
-                # The Developer API reports invalid model/parameter combinations as
-                # HTTP 400. Repeating the same paid-generation request cannot recover.
-                operation = self.genai_client.models.generate_videos(**request_args)
-            else:
-                operation = self.retry_handler.retry_with_backoff(
-                    self.genai_client.models.generate_videos,
-                    **request_args,
-                )
-            
+            set_generation_details(model=self.model_name, prompt=prompt,
+                parameters={k: v for k, v in config_args.items() if k not in {"last_frame", "output_gcs_uri"}},
+                billing=BillingObservation(estimated_usd=estimated_cost))
+            # Paid submissions must be recorded individually by the orchestrator.
+            operation = self.genai_client.models.generate_videos(**request_args)
+            set_generation_details(provider_request_id=getattr(operation, "name", None))
+
             # Poll the operation until completion
             start_time = time.time()
             progress_monitor.update(10, "Video generation started, waiting for completion...")
@@ -368,6 +382,8 @@ class Veo3Generator(VideoGeneratorInterface):
             max_size_mb=10.0
         )
         
+        replace_generation_reference(image_path, prepared_image)
+
         # Create a unique blob name
         timestamp = int(time.time())
         filename = os.path.basename(prepared_image)
