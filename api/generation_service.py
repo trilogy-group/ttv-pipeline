@@ -127,6 +127,12 @@ class GenerationService:
 
         return create_video_generator(provider, config or self.config)
 
+    @staticmethod
+    def _estimate_cost(generator, provider, duration, aspect_ratio):
+        if provider == "runway":
+            return generator.estimate_cost(duration, aspect_ratio)
+        return generator.estimate_cost(duration)
+
     def capabilities(self):
         from pipeline import get_video_generation_backend
 
@@ -218,12 +224,22 @@ class GenerationService:
             "scenes": [],
             "blocked_reasons": [],
         }
+        previous_scene_ready = False
         for scene in sorted(request["scenes"], key=lambda s: s["order"]):
             policy = scene["generation_policy"]
             refs = {a["asset_id"] for a in scene["reference_assets"]}
             if not set(scene["continuity"]["required_reference_asset_ids"]) <= refs:
                 raise ValueError("Required continuity reference is missing")
             variants, warnings = [], []
+            has_first = any(a["role"] == "first_frame" for a in scene["reference_assets"])
+            can_inherit = (
+                scene["continuity"]["mode"] == "continue_from_previous"
+                and previous_scene_ready
+            )
+            if not has_first and not can_inherit and not (
+                self.config.get("image_generation_model") or self.keyframe_generator
+            ):
+                warnings.append("A first frame requires a configured image generation model.")
             if self.config.get("image_generation_model"):
                 warnings.append(
                     f"Keyframe model: {self.config['image_generation_model']}; image cost estimate unavailable."
@@ -242,6 +258,14 @@ class GenerationService:
             if not policy["allow_provider_fallback"]:
                 available = available[:1]
             for cap in available:
+                if not has_first and not can_inherit and not (
+                    self.config.get("image_generation_model") or self.keyframe_generator
+                ):
+                    continue
+                if cap["provider"] == "veo3" and scene["delivery"]["aspect_ratio"] not in {
+                    "16:9", "9:16"
+                }:
+                    continue
                 if (
                     scene["delivery"]["audio_policy"] == "required"
                     and not cap["capability_snapshot"]["supports_audio"]
@@ -262,7 +286,12 @@ class GenerationService:
                 )
                 variant_id = uid()
                 generator = self._generator(cap["provider"])
-                estimates = [generator.estimate_cost(d) for d in lengths]
+                estimates = [
+                    self._estimate_cost(
+                        generator, cap["provider"], d, scene["delivery"]["aspect_ratio"]
+                    )
+                    for d in lengths
+                ]
                 cost = (
                     None
                     if any(e is None for e in estimates)
@@ -337,6 +366,7 @@ class GenerationService:
                         "message": "No available provider variant satisfies this scene budget and capabilities.",
                     }
                 )
+            previous_scene_ready = bool(variants)
             plan["scenes"].append(
                 {
                     "scene_id": scene["scene_id"],
@@ -391,6 +421,10 @@ class GenerationService:
         if len(set(allowed)) != len(allowed) or not set(allowed) <= set(variants):
             raise ValueError("Unapproved or unknown variant")
         current = {cap["provider"]: cap for cap in self.capabilities()["providers"]}
+        request_scenes = {s["scene_id"]: s for s in request["scenes"]}
+        plan_scenes = {
+            v["variant_id"]: s["scene_id"] for s in plan["scenes"] for v in s["variants"]
+        }
         for identifier in allowed:
             variant = variants[identifier]
             cap = current.get(variant["provider"])
@@ -403,8 +437,10 @@ class GenerationService:
                     "Provider capabilities or model changed; create and approve a new plan"
                 )
             generator = self._generator(variant["provider"])
+            ratio = request_scenes[plan_scenes[identifier]]["delivery"]["aspect_ratio"]
             estimates = [
-                generator.estimate_cost(shot["nominal_duration_s"]) for shot in variant["shots"]
+                self._estimate_cost(generator, variant["provider"], shot["nominal_duration_s"], ratio)
+                for shot in variant["shots"]
             ]
             current_cost = (
                 None
@@ -804,9 +840,10 @@ class GenerationService:
                     scene_references = list(scene["reference_assets"])
                     continues = scene["continuity"]["mode"] == "continue_from_previous"
                     inherited_frame = previous_scene_boundary if continues else None
-                    if inherited_frame and previous_scene_take:
+                    if inherited_frame:
                         boundary_asset = self._asset(inherited_frame, "first_frame", job_id)
-                        boundary_asset["source_take_id"] = previous_scene_take
+                        if previous_scene_take:
+                            boundary_asset["source_take_id"] = previous_scene_take
                         result["reference_assets"].append(boundary_asset)
                         scene_references.append(boundary_asset)
                     elif continues and not any(
@@ -864,7 +901,10 @@ class GenerationService:
                             if call_count >= scene["generation_policy"]["max_attempts"]:
                                 out["warnings"].append("Scene attempt limit reached")
                                 break
-                            estimate = generator.estimate_cost(shot["nominal_duration_s"])
+                            estimate = self._estimate_cost(
+                                generator, variant["provider"], shot["nominal_duration_s"],
+                                scene["delivery"]["aspect_ratio"]
+                            )
                             if variant["estimated_cost"]["amount"] is None:
                                 estimate = None
                             scene_budget = scene["generation_policy"]["max_estimated_cost_usd"]
@@ -927,6 +967,8 @@ class GenerationService:
                                     if supplied_frame:
                                         path = supplied_frame
                                     else:
+                                        if call_count >= scene["generation_policy"]["max_attempts"]:
+                                            raise ValueError("Scene attempt limit reached")
                                         if not approval["allow_unknown_cost"]:
                                             raise ValueError(
                                                 "Keyframe generation has unknown cost and needs explicit approval"
@@ -957,6 +999,7 @@ class GenerationService:
                                             with self._provider_call(
                                                 job_id, shot["shot_id"], position
                                             ) as image_attempt_id:
+                                                call_count += 1
                                                 generated = self._keyframe(
                                                     shot[f"{position}_frame_prompt"],
                                                     path,
@@ -1102,6 +1145,9 @@ class GenerationService:
                                 previous_frame = frames.get("last", frames["first"])
                                 continue
                             self._check_approval(approval)
+                            if call_count >= scene["generation_policy"]["max_attempts"]:
+                                out["warnings"].append("Scene attempt limit reached")
+                                break
                             if estimate is not None and (
                                 (scene_budget is not None and scene_spent + estimate > scene_budget)
                                 or (job_budget is not None and total_spent + estimate > job_budget)
@@ -1110,7 +1156,6 @@ class GenerationService:
                                     "Estimated cost budget exhausted after keyframe generation"
                                 )
                                 break
-                            call_count += 1
                             if not any(
                                 s["shot_id"] == shot["shot_id"] for s in out["actual_shots"]
                             ):
@@ -1135,6 +1180,7 @@ class GenerationService:
                                 with self._provider_call(
                                     job_id, shot["shot_id"], "video"
                                 ) as attempt_id:
+                                    call_count += 1
                                     output = generator.generate_video(
                                         prompt=shot["prompt_snapshot"],
                                         input_image_path=frames["first"],
@@ -1302,7 +1348,7 @@ class GenerationService:
                                     }
                                 )
                                 previous_scene_take = out["takes"][-1]["take_id"]
-                                previous_scene_boundary = previous_frame
+                            previous_scene_boundary = previous_frame
                             break
                     if out["status"] != "succeeded":
                         previous_scene_take = previous_scene_boundary = None

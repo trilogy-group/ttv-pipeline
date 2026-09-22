@@ -413,6 +413,8 @@ def validate(kind: str, document: dict) -> dict:
     for key in ("scene_id", "order"):
         if len({s[key] for s in scenes}) != len(scenes):
             raise ValueError(f"Duplicate scene {key}")
+    if kind == "GenerationRequest":
+        _unique([asset for scene in scenes for asset in scene["reference_assets"]], "asset_id")
     if kind == "GenerationResult":
         for scene in scenes:
             shots = _unique(scene["actual_shots"], "shot_id")

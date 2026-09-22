@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import inspect
 import json
+import re
 import shutil
 from contextvars import ContextVar
 from dataclasses import asdict
@@ -49,6 +50,11 @@ class LegacyLedger:
         ]
         event = {
             "id": uid(),
+            "segment": (
+                int(match.group(1))
+                if (match := re.search(r"segment_(\d+)", Path(output.path).name))
+                else None
+            ),
             "output": asdict(output),
             "error": type(error).__name__ if error else None,
             "references": references,
@@ -70,7 +76,13 @@ class LegacyLedger:
 
     def finish(self, error=None, preview=None):
         self.events = [json.loads(p.read_text()) for p in self.root.glob("*.event.json")]
-        self.events.sort(key=lambda e: (e["output"]["started_at"], e["id"]))
+        self.events.sort(
+            key=lambda e: (
+                e["segment"] if e.get("segment") is not None else float("inf"),
+                e["output"]["started_at"],
+                e["id"],
+            )
+        )
         if not self.events:
             return
         attempts = []
@@ -79,9 +91,10 @@ class LegacyLedger:
         frames = []
         references = []
         previous_failure = {}
+        shot_by_path = {}
         for event in self.events:
             output = event["output"]
-            sid = event["id"]
+            sid = shot_by_path.setdefault(output["path"], event["id"])
             references.extend(event["references"])
             parameters = output["parameters"]
             duration = parameters.get(
@@ -92,14 +105,15 @@ class LegacyLedger:
             except ValueError:
                 duration = 1
             duration = max(0.001, duration)
-            shots.append(
-                {
-                    "shot_id": sid,
-                    "order": len(shots),
-                    "nominal_duration_s": duration,
-                    "continuity_mode": "cut",
-                }
-            )
+            if sid == event["id"]:
+                shots.append(
+                    {
+                        "shot_id": sid,
+                        "order": len(shots),
+                        "nominal_duration_s": duration,
+                        "continuity_mode": "cut",
+                    }
+                )
             billing = output["billing"] or {
                 "raw_unit_name": None,
                 "raw_units": None,

@@ -36,6 +36,8 @@ class RunwayMLGenerator(VideoGeneratorInterface):
         "gen-4": 0.08,           # $0.08 per second
         "gen4_turbo": 0.03       # $0.03 per second
     }
+    RATIOS = {"16:9": "1280:720", "9:16": "720:1280", "1:1": "960:960",
+              "4:3": "1104:832", "3:4": "832:1104", "21:9": "1584:672"}
     
     def __init__(self, config: Dict[str, Any]):
         super().__init__(config)
@@ -106,7 +108,7 @@ class RunwayMLGenerator(VideoGeneratorInterface):
             "832:1104": 1.2,     # 3:4 portrait
             "1584:672": 1.5      # 21:9 ultrawide
         }
-        multiplier = resolution_multipliers.get(resolution, 1.0)
+        multiplier = resolution_multipliers.get(self.RATIOS.get(resolution, resolution), 1.0)
         
         return duration * price_per_second * multiplier
     
@@ -150,7 +152,8 @@ class RunwayMLGenerator(VideoGeneratorInterface):
             raise InvalidInputError(f"Input validation failed: {'; '.join(validation_errors)}")
         
         # Log cost estimate
-        estimated_cost = self.estimate_cost(duration)
+        ratio = kwargs.get("aspect_ratio", self.default_ratio)
+        estimated_cost = self.estimate_cost(duration, ratio)
         self.logger.info(f"Estimated cost: ${estimated_cost:.2f}")
         
         try:
@@ -160,8 +163,7 @@ class RunwayMLGenerator(VideoGeneratorInterface):
                 base64_image = base64.b64encode(f.read()).decode("utf-8")
             
             # Determine aspect ratio from kwargs or use default
-            ratio = kwargs.get("aspect_ratio", self.default_ratio)
-            ratio = {"16:9":"1280:720", "9:16":"720:1280", "1:1":"960:960", "4:3":"1104:832", "3:4":"832:1104", "21:9":"1584:672"}.get(ratio, ratio)
+            ratio = self.RATIOS.get(ratio, ratio)
             
             # Create the image-to-video task
             self.logger.info(f"Creating video generation task with model {self.model_version}...")

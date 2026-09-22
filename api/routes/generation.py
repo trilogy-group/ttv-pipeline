@@ -77,8 +77,19 @@ def approve(request: Request, body: dict):
         job = svc.approve(body)
         if job["status"] == "queued" and not queue.get_job(job["id"]):
             config = {**svc.config, "integration_root": str(svc.root), "generation_v2": True}
+            generation_request = svc.get("GenerationRequest", job["request_id"])
+            provider_timeout = max(
+                600, int(config.get("remote_api_settings", {}).get("timeout", 600))
+            )
+            job_timeout = 3600 + provider_timeout * sum(
+                scene["generation_policy"]["max_attempts"]
+                for scene in generation_request["scenes"]
+            )
             queue.enqueue_job(
-                JobCreateRequest(prompt="Approved generation plan"), config, job_id=job["id"]
+                JobCreateRequest(prompt="Approved generation plan"),
+                config,
+                job_timeout=job_timeout,
+                job_id=job["id"],
             )
         return job
 

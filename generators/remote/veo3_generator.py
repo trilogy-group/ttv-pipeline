@@ -140,6 +140,7 @@ class Veo3Generator(VideoGeneratorInterface):
             "supported_durations": self.SUPPORTED_DURATIONS,
             "supported_resolutions": ["16:9", "9:16"],  # Aspect ratios
             "supports_image_to_video": True,
+            "supports_first_last_frame": True,
             "supports_text_to_video": False,  # Currently only image-to-video
             "requires_gpu": False,  # API-based
             "api_based": True,
@@ -257,10 +258,9 @@ class Veo3Generator(VideoGeneratorInterface):
         os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
         
         # Get video aspect ratio from config (veo3 only supports 16:9 and 9:16)
-        video_aspect_ratio = self.config.get('video_aspect_ratio', '16:9')
+        video_aspect_ratio = kwargs.get('aspect_ratio', self.config.get('video_aspect_ratio', '16:9'))
         if video_aspect_ratio not in ['16:9', '9:16']:
-            self.logger.warning(f"Invalid video aspect ratio {video_aspect_ratio}, defaulting to 16:9")
-            video_aspect_ratio = '16:9'
+            raise InvalidInputError(f"Unsupported Veo aspect ratio: {video_aspect_ratio}")
         
         self.logger.info(f"Using video aspect ratio: {video_aspect_ratio}")
         

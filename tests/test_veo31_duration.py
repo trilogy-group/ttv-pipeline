@@ -396,13 +396,16 @@ def test_veo_request_contains_model_duration_and_both_frames(tmp_path):
         last_frame_path=str(last_frame),
         output_path=str(output_path),
         duration=6,
+        aspect_ratio="9:16",
     )
 
     request = generate_videos.call_args.kwargs
     assert request["model"] == "veo-3.1-generate-001"
     assert request["image"].gcs_uri == "gs://inputs/first.png"
     assert request["config"].duration_seconds == 6
+    assert request["config"].aspect_ratio == "9:16"
     assert request["config"].last_frame.gcs_uri == "gs://inputs/last.png"
+    assert generator.get_capabilities()["supports_first_last_frame"] is True
 
 
 def test_veo_google_api_key_request_uses_local_frames_and_downloads(tmp_path):

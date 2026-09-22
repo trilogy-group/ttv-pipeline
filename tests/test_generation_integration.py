@@ -44,6 +44,7 @@ class FakeProvider:
     def generate_video(self, prompt, input_image_path, output_path, duration=1, **kwargs):
         self.calls.append(self.name)
         set_generation_details(
+            provider=self.name,
             model=self.name,
             parameters={"duration_s": duration, "fps": 10},
             seed=7,
@@ -349,6 +350,8 @@ def test_standalone_sidecar_retains_attempts_and_source_clips(tmp_path):
     result = json.loads((ledger.root / "result.json").read_text())
     validate("GenerationResult", result)
     assert len(result["scenes"][0]["attempts"]) == 2
+    assert len(result["scenes"][0]["actual_shots"]) == 1
+    assert len({a["shot_id"] for a in result["scenes"][0]["attempts"]}) == 1
     assert result["preview_assets"][0]["role"] == "scene_preview"
     assert (
         result["scenes"][0]["attempts"][1]["fallback_from_attempt_id"]
@@ -532,8 +535,9 @@ def test_http_queue_and_both_workers_use_the_same_durable_service(tmp_path, monk
         def get_job(self, job_id):
             return jobs.get(job_id)
 
-        def enqueue_job(self, request, config, job_id):
+        def enqueue_job(self, request, config, job_timeout, job_id):
             assert job_id not in jobs
+            assert job_timeout == 3600 + 600 * 24
             jobs[job_id] = SimpleNamespace(config=config)
 
         def update_job_status(self, job_id, status, **fields):
@@ -677,6 +681,13 @@ def test_unknown_veo_price_requires_explicit_approval(tmp_path, monkeypatch):
     )
     req = request()
     req["scenes"] = [req["scenes"][0]]
+    frame = tmp_path / "first.png"
+    keyframe("", frame, None)
+    from api.generation_service import file_hash
+    req["scenes"][0]["reference_assets"] = [{
+        "asset_id": "first", "uri": frame.as_uri(), "sha256": file_hash(frame),
+        "mime_type": "image/png", "role": "first_frame", "rights_note": None,
+    }]
     req["scenes"][0]["generation_policy"]["provider_preferences"] = ["veo3"]
     plan = svc.plan(seal(req))
     assert plan["scenes"][0]["variants"][0]["estimated_cost"]["amount"] is None
@@ -734,6 +745,110 @@ def test_optional_last_frame_uses_approved_plan_without_image_calls(tmp_path, in
     assert [k["position"] for k in result["scenes"][0]["keyframes"]] == (
         ["first", "last"] if include_last else ["first"]
     )
+
+
+def test_image_call_consumes_scene_attempt_limit(tmp_path):
+    svc = service(tmp_path)
+    req = request()
+    req["scenes"] = [req["scenes"][0]]
+    req["scenes"][0]["generation_policy"]["max_attempts"] = 1
+    result = svc.run(svc.approve(approval(svc.plan(seal(req))))["id"])
+    assert FakeProvider.calls == []
+    assert len(result["scenes"][0]["attempts"]) == 1
+    with svc.db() as db:
+        assert db.execute("SELECT COUNT(*) FROM provider_calls").fetchone()[0] == 1
+
+    svc = service(tmp_path / "keyframes")
+    req = request()
+    req["scenes"] = [req["scenes"][1]]
+    req["scenes"][0]["generation_policy"]["max_attempts"] = 1
+    result = svc.run(svc.approve(approval(svc.plan(seal(req)), "keyframes"))["id"])
+    assert len(result["scenes"][0]["attempts"]) == 1
+
+
+def test_keyframe_scene_supplies_next_scene_boundary(tmp_path):
+    svc = service(tmp_path)
+    req = request()
+    req["scenes"] = req["scenes"][:2]
+    req["scenes"][1]["continuity"]["mode"] = "continue_from_previous"
+    plan = svc.plan(seal(req))
+    assert plan["status"] == "ready"
+    result = svc.run(svc.approve(approval(plan, "keyframes"))["id"])
+    assert result["terminal_status"] == "succeeded"
+    assert result["scenes"][1]["keyframes"][0]["position"] == "first"
+
+
+def test_duplicate_reference_ids_and_missing_first_frame_block_before_execution(tmp_path):
+    svc = service(tmp_path)
+    req = request()
+    req["scenes"] = [req["scenes"][0]]
+    asset = {
+        "asset_id": "duplicate", "uri": "gs://fixture/frame.png",
+        "sha256": "sha256:" + "0" * 64, "mime_type": "image/png",
+        "role": "first_frame", "rights_note": None,
+    }
+    req["scenes"][0]["reference_assets"] = [asset, {**asset, "role": "last_frame"}]
+    with pytest.raises(ValueError, match="Duplicate asset_id"):
+        svc.plan(seal(req))
+    svc.keyframe_generator = None
+    req["scenes"][0]["reference_assets"] = []
+    plan = svc.plan(seal(req))
+    assert plan["status"] == "blocked"
+    assert not plan["scenes"][0]["variants"]
+
+
+def test_runway_ratio_affects_plan_and_approval_cost(tmp_path):
+    from generators.remote.runway_generator import RunwayMLGenerator
+
+    actual = object.__new__(RunwayMLGenerator)
+    actual.model_version = "gen4_turbo"
+    assert actual.estimate_cost(1, "21:9") == pytest.approx(0.045)
+
+    class Runway(FakeProvider):
+        def estimate_cost(self, duration, resolution="16:9"):
+            return 0.15 if resolution == "21:9" else 0.1
+
+    svc = service(tmp_path)
+    svc.config["default_backend"] = "runway"
+    svc.generator_factory = lambda name, config: Runway(name)
+    req = request()
+    req["scenes"] = [req["scenes"][0]]
+    req["scenes"][0]["requested_duration_s"] = 1
+    req["scenes"][0]["delivery"]["aspect_ratio"] = "21:9"
+    req["scenes"][0]["generation_policy"]["provider_preferences"] = ["runway"]
+    plan = svc.plan(seal(req))
+    assert plan["scenes"][0]["variants"][0]["estimated_cost"]["amount"] == 0.15
+    svc.approve(approval(plan))
+
+
+def test_parallel_legacy_events_follow_segment_number(tmp_path, monkeypatch):
+    from datetime import datetime, timedelta
+
+    from api.generation_ledger import LegacyLedger
+    from video_generator_interface import GenerationOutput
+
+    monkeypatch.setattr("api.generation_ledger.probe", lambda path: {
+        "measured_duration_s": 1.0, "width": 320, "height": 180,
+        "fps": 10.0, "has_audio": False,
+    })
+    ledger = LegacyLedger(tmp_path, "parallel")
+    later = datetime.now(UTC)
+    for number, started in [(2, later), (1, later + timedelta(seconds=1))]:
+        path = tmp_path / f"segment_{number:02d}.mp4"
+        path.write_bytes(f"segment {number}".encode())
+        ledger.record(GenerationOutput(
+            path=str(path), provider="offline-fixture", model=None, model_version=None,
+            provider_request_id=None, seed=None, parameters={}, prompt="frame",
+            billing=None, reference_paths=(), started_at=started, finished_at=started,
+        ), None)
+    ledger.finish()
+    result = json.loads((ledger.root / "result.json").read_text())
+    assert [event["segment"] for event in ledger.events] == [1, 2]
+    scene = result["scenes"][0]
+    assert [clip["attempt_id"] for clip in scene["clips"]] == [
+        event["id"] for event in ledger.events
+    ]
+    assert scene["takes"][0]["clip_ids"] == [clip["clip_id"] for clip in scene["clips"]]
 
 
 def test_provider_http_failure_retains_status_without_response_secrets(tmp_path):
