@@ -1,14 +1,16 @@
 # Media Tooling integration validation
 
-Validated on Python 3.14.3 with FFmpeg/FFprobe on 2026-09-22. The integration is based on `4c20bfc774ebd96c60d9b1988bf810c5165467e1`. Local checks and a live process-boundary pilot pass. The primary MiniMax H3 Max generation remains blocked by the configured Fal account's exhausted balance.
+Validated on Python 3.14.3 with FFmpeg/FFprobe on 2026-09-22. The integration is based on `4c20bfc774ebd96c60d9b1988bf810c5165467e1`. Local checks, a live process-boundary pilot and primary MiniMax H3 Max generation, rendering and verification pass.
 
 ## Primary endpoint: MiniMax H3 Max
 
 Use [`examples/pipeline_config.h3-max.yaml`](../examples/pipeline_config.h3-max.yaml) and set `FAL_KEY` or `FAL_API_KEY` in the process environment. The exact endpoint is `minimax/h3-max/image-to-video`. Its profile uses integer durations from 5 through 15 seconds, uppercase resolution values, safety checking enabled, and `prompt_expansion_mode: disabled` by default. It supports a first image, an optional ending image and an output soundtrack.
 
-The attempted live case used a supplied first image, 5 seconds, `768P`, seed 42, one allowed attempt, no fallback and no paid image generation. The documented endpoint quote on 2026-09-22 was $0.20 for this case through September 30 ($0.40 afterward). The quote is separate from billing: adapter USD estimates and actual charges remain null, so the exact approval explicitly allows unknown cost. [Fal endpoint and pricing](https://fal.ai/models/minimax/h3-max/image-to-video).
+The live case used a funded Fal account, supplied first image, 5 seconds, `768P`, seed 42, one allowed attempt, no fallback and no paid image generation. The documented endpoint quote on 2026-09-22 was $0.20 for this case through September 30 ($0.40 afterward). The quote is separate from billing: adapter USD estimates and actual charges remain null, so the exact approval explicitly allows unknown cost with a $1 ceiling on known estimates. The provider reported `X-Fal-Billable-Units: 8.0`, retained without conversion to USD. [Fal endpoint and pricing](https://fal.ai/models/minimax/h3-max/image-to-video).
 
-Two immutable failed results were retained. The controlled diagnostic submission returned HTTP 403 with the reason “Exhausted balance,” without an accepted provider request ID or generated clip. Media Tooling validated and imported that failed artifact chain. H3 generation, render and verification remain pending a funded account; neither retry nor funding was performed after this response.
+The production generator factory and generation service completed exactly one submission and one attempt in 7.86 seconds, retaining provider request ID `01a0c9a1-4567-73e1-a9d6-b0a440ec3ba8`. Duplicate approval and terminal result collection reused that result. The source is H.264 at 1344×768 and 24 fps, with a 5.166667-second video stream and a 5.184-second container. Its AAC stereo soundtrack is 32 kHz and non-silent (mean −21.6 dB, peak −8.6 dB). The source asset hash is `sha256:9c6d164040984ab2199273b32ee1a07ecca9b5160a331759f984de61117e85b6`.
+
+The shipped Media Tooling CLI imported the canonical handoff, selected the take, rendered it with normal loudness normalization and passed standalone media verification with zero blocking findings. A separate comparison of the attempt against the approved variant confirmed matching shot, provider, model and prompt. The rendered preview is 1920×1098 at 24 fps, with a 5.166667-second video stream, a 5.205-second container and AAC stereo audio at 48 kHz (mean −16.7 dB, peak −3.7 dB).
 
 ## Automated checks
 
@@ -58,7 +60,7 @@ uv run python scripts/ttv_offline_acceptance.py \
   --asset-root /tmp/ttv-media-pilot --project /tmp/ttv-media-edit
 ```
 
-The live task evidence directory is `/Users/magos/.codex/worktrees/ttv-media-integration/live-smoke-fprv23t8`. Sanitized evidence includes `after-auth-fix.json`, `queue-dedup.json`, `cleanup.json`, `gcs-readiness.json`, `media-client-fixed/live-acceptance.json`, `media-google-secondary/provider-acceptance.json`, and `h3-provider-2/wire-summary.json`. Canonical provider handoffs and immutable results remain alongside these records. Private logs and credentials are excluded from repository artifacts.
+The live task evidence directory is `/Users/magos/.codex/worktrees/ttv-media-integration/live-smoke-fprv23t8`. Sanitized evidence includes `after-auth-fix.json`, `queue-dedup.json`, `cleanup.json`, `gcs-readiness.json`, `media-client-fixed/live-acceptance.json`, `media-google-secondary/provider-acceptance.json`, `h3-funded-provider/{summary,wire-summary,source-probe}.json`, and `media-h3-funded/{provider-acceptance,approved-provenance,technical-verification}.json`. Canonical provider handoffs and immutable results remain alongside these records. Private logs and credentials are excluded from repository artifacts.
 
 ## Operational limits
 
