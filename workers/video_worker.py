@@ -221,6 +221,10 @@ def process_video_job(job_id: str, use_trio: bool = True) -> str:
     
     # Ensure queue infrastructure is initialized once per worker process.
     ensure_queue_initialized()
+    integration_job = get_job_queue().get_job(job_id)
+    if integration_job and integration_job.config.get("generation_v2") is True:
+        from api.generation_service import run_queued_generation
+        return run_queued_generation(job_id, get_job_queue())
     
     try:
         # Use Trio structured concurrency if available and requested
@@ -349,6 +353,10 @@ def process_video_job_threading(job_id: str) -> str:
             raise
 
 
+from api.generation_ledger import legacy_provenance
+
+
+@legacy_provenance
 def execute_pipeline_with_config(
     job_id: str,
     prompt: str,

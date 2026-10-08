@@ -29,7 +29,7 @@ logger = get_logger(__name__)
 
 def _is_api_endpoint(path: str) -> bool:
     """Check whether a path targets API job endpoints."""
-    return path.startswith("/v1/")
+    return path.startswith(("/v1/", "/v2/"))
 
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
@@ -554,7 +554,7 @@ class AuthTokenMiddleware(BaseHTTPMiddleware):
 
     def __init__(self, app, protected_paths: Optional[Set[str]] = None):
         super().__init__(app)
-        self.protected_paths = protected_paths or {"/v1/jobs", "/v1/plans"}
+        self.protected_paths = protected_paths or {"/v1/jobs", "/v1/plans", "/v2/jobs", "/v2/plans"}
 
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
         # Skip CORS preflight

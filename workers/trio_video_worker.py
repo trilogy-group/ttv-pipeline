@@ -74,6 +74,10 @@ async def process_video_job_trio(job_id: str) -> str:
     """
 
     logger.info(f"Starting Trio-based video generation job {job_id}")
+    integration_job = get_job_queue().get_job(job_id)
+    if integration_job and integration_job.config.get("generation_v2") is True:
+        from api.generation_service import run_queued_generation
+        return await trio.to_thread.run_sync(run_queued_generation, job_id, get_job_queue())
 
     # The pipeline phases are sequential; a cancellation scope is sufficient.
     with trio.CancelScope() as cancel_scope:
@@ -142,6 +146,10 @@ async def process_video_job_trio(job_id: str) -> str:
             raise
 
 
+from api.generation_ledger import legacy_provenance
+
+
+@legacy_provenance
 async def execute_pipeline_with_trio(
     job_id: str,
     prompt: str,

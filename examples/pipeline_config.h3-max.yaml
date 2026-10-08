@@ -1,0 +1,20 @@
+# Set FAL_KEY (or FAL_API_KEY) in the process environment; credentials are not persisted.
+default_backend: fal
+integration_root: ./generation-data
+# Local HTTP/file mode. API and worker share this durable filesystem.
+integration_publish_gcs: false
+integration_asset_roots:
+  - /absolute/path/to/media-project
+# Optional end-image input uses a reference AssetRef with role last_frame.
+# Set true only when the reviewed plan should synthesize a missing ending frame.
+integration_generate_last_frame: false
+fal:
+  model: minimax/h3-max/image-to-video
+  default_input:
+    resolution: 768P
+    prompt_expansion_mode: disabled
+    enable_safety_checker: true
+remote_api_settings:
+  max_retries: 1
+  polling_interval: 2
+  timeout: 600

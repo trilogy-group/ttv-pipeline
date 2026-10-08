@@ -278,6 +278,7 @@ async def get_job_artifact_url(
             "expires_at": expiration_time.isoformat(),
             "expiration_seconds": expiration_seconds,
             "mime_type": mime_type,
+            "artifact_role": "scene_preview" if mime_type.startswith("video/") else "keyframe_storyboard",
         }
         if mime_type.startswith("video/"):
             response["video_url"] = signed_url
