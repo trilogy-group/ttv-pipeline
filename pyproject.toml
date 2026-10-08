@@ -55,6 +55,7 @@ dev = [
 py-modules = ["frame_extractor", "keyframe_generator", "pipeline", "video_generator_interface"]
 
 [tool.uv]
+exclude-newer = "7 days"
 constraint-dependencies = ["cryptography>=50.0.2", "h2>=4.4.1", "multidict>=6.9.1", "urllib3>=2.8.0"]
 
 [tool.setuptools.package-data]
