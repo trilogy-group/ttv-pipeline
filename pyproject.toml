@@ -34,7 +34,7 @@ dependencies = [
     "runwayml>=3.1.0",
     "google-genai>=0.1.0",
     "google-auth>=2.23.0",
-    "aiohttp>=3.8.0",
+    "aiohttp>=3.14.3",
     "tenacity>=8.2.0",
 ]
 
@@ -53,6 +53,9 @@ dev = [
 
 [tool.setuptools]
 py-modules = ["frame_extractor", "keyframe_generator", "pipeline", "video_generator_interface"]
+
+[tool.uv]
+constraint-dependencies = ["h2>=4.4.1", "urllib3>=2.8.0"]
 
 [tool.setuptools.package-data]
 api = ["contracts/v1_0/*.json", "contracts/v1_0/*.md", "contracts/v1_0/fixtures/*.json"]
