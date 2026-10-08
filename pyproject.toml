@@ -55,7 +55,7 @@ dev = [
 py-modules = ["frame_extractor", "keyframe_generator", "pipeline", "video_generator_interface"]
 
 [tool.uv]
-constraint-dependencies = ["h2>=4.4.1", "urllib3>=2.8.0"]
+constraint-dependencies = ["cryptography>=50.0.2", "h2>=4.4.1", "urllib3>=2.8.0"]
 
 [tool.setuptools.package-data]
 api = ["contracts/v1_0/*.json", "contracts/v1_0/*.md", "contracts/v1_0/fixtures/*.json"]
