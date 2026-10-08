@@ -71,6 +71,7 @@ class RunwayMLGenerator(VideoGeneratorInterface):
         """Return Runway ML capabilities"""
         return {
             "max_duration": self.max_duration,
+            "max_prompt_length": 500,
             "supported_resolutions": [
                 "1280:720",   # 16:9 landscape
                 "720:1280",   # 9:16 portrait 

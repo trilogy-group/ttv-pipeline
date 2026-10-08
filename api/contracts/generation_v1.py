@@ -419,6 +419,12 @@ def validate(kind: str, document: dict) -> dict:
             for role in ("first_frame", "last_frame"):
                 if sum(asset["role"] == role for asset in scene["reference_assets"]) > 1:
                     raise ValueError(f"Multiple {role} assets in one scene")
+    if kind == "GenerationPlan":
+        _unique([variant for scene in scenes for variant in scene["variants"]], "variant_id")
+        for scene in scenes:
+            for variant in scene["variants"]:
+                _unique(variant["shots"], "shot_id")
+                _unique(variant["shots"], "order")
     if kind == "EditorialSelection":
         for scene in scenes:
             for edit in scene["clip_edits"]:

@@ -133,6 +133,15 @@ class GenerationService:
             return generator.estimate_cost(duration, aspect_ratio)
         return generator.estimate_cost(duration)
 
+    @staticmethod
+    def _variant_model(generator, shots, default):
+        if not hasattr(generator, "effective_model"):
+            return default
+        models = {generator.effective_model(bool(shot["last_frame_prompt"])) for shot in shots}
+        if len(models) != 1:
+            raise ValueError("Variant would use multiple provider endpoints")
+        return models.pop()
+
     def capabilities(self):
         from pipeline import get_video_generation_backend
 
@@ -157,7 +166,8 @@ class GenerationService:
                             "default_video_generation_backend": provider,
                         }
                     )
-                durations = durations or list(range(1, math.floor(raw["max_duration"]) + 1))
+                if durations is None:
+                    durations = list(range(1, math.floor(raw["max_duration"]) + 1))
                 model = raw.get("model") or next(
                     (
                         getattr(generator, name, None)
@@ -233,11 +243,12 @@ class GenerationService:
             variants, warnings = [], []
             has_first = any(a["role"] == "first_frame" for a in scene["reference_assets"])
             can_inherit = (
-                scene["continuity"]["mode"] == "continue_from_previous"
-                and previous_scene_ready
+                scene["continuity"]["mode"] == "continue_from_previous" and previous_scene_ready
             )
-            if not has_first and not can_inherit and not (
-                self.config.get("image_generation_model") or self.keyframe_generator
+            if (
+                not has_first
+                and not can_inherit
+                and not (self.config.get("image_generation_model") or self.keyframe_generator)
             ):
                 warnings.append("A first frame requires a configured image generation model.")
             if self.config.get("image_generation_model"):
@@ -258,12 +269,22 @@ class GenerationService:
             if not policy["allow_provider_fallback"]:
                 available = available[:1]
             for cap in available:
-                if not has_first and not can_inherit and not (
-                    self.config.get("image_generation_model") or self.keyframe_generator
+                width, height = (
+                    scene["delivery"]["target_width"],
+                    scene["delivery"]["target_height"],
+                )
+                if width % 2 or height % 2:
+                    warnings.append("Delivery dimensions must be even for H.264 output.")
+                    continue
+                if (
+                    not has_first
+                    and not can_inherit
+                    and not (self.config.get("image_generation_model") or self.keyframe_generator)
                 ):
                     continue
                 if cap["provider"] == "veo3" and scene["delivery"]["aspect_ratio"] not in {
-                    "16:9", "9:16"
+                    "16:9",
+                    "9:16",
                 }:
                     continue
                 if (
@@ -274,11 +295,28 @@ class GenerationService:
                 if any(not a["mime_type"].startswith("image/") for a in scene["reference_assets"]):
                     warnings.append("This provider path accepts image references only.")
                     continue
+                if (
+                    any(
+                        a["role"] not in {"first_frame", "last_frame"}
+                        for a in scene["reference_assets"]
+                    )
+                    and not self.keyframe_generator
+                    and "gemini" not in str(self.config.get("image_generation_model", "")).lower()
+                ):
+                    warnings.append(
+                        "Multiple visual references require a configured Gemini keyframe model."
+                    )
+                    continue
                 supplied_last = any(a["role"] == "last_frame" for a in scene["reference_assets"])
                 if supplied_last and not cap["capability_snapshot"]["supports_last_frame"]:
                     warnings.append("Supplied ending frame requires a compatible provider variant.")
                     continue
                 durations = cap["capability_snapshot"]["allowed_durations_s"]
+                if not durations:
+                    warnings.append(
+                        "Adapter has no verified duration control; use a compatible provider."
+                    )
+                    continue
                 if any(int(d) != d for d in durations):
                     continue
                 lengths = plan_provider_segment_durations(
@@ -286,6 +324,17 @@ class GenerationService:
                 )
                 variant_id = uid()
                 generator = self._generator(cap["provider"])
+                prompt = "\n".join(
+                    scene["intent"][field]
+                    for field in ("summary", "entry_state", "exit_state", "continuity_notes")
+                    if scene["intent"][field]
+                )
+                prompt_limit = generator.get_capabilities().get("max_prompt_length")
+                if not prompt.strip() or (prompt_limit and len(prompt) > prompt_limit):
+                    warnings.append(
+                        "Scene prompt exceeds provider limits; revise the intent before approval."
+                    )
+                    continue
                 estimates = [
                     self._estimate_cost(
                         generator, cap["provider"], d, scene["delivery"]["aspect_ratio"]
@@ -342,12 +391,35 @@ class GenerationService:
                                 )
                                 else ""
                             ),
-                            "reference_asset_ids": sorted(refs),
+                            "reference_asset_ids": sorted(
+                                a["asset_id"]
+                                for a in scene["reference_assets"]
+                                if (a["role"] != "first_frame" or i == 0)
+                                and (a["role"] != "last_frame" or i == len(lengths) - 1)
+                                and (
+                                    a["role"] in {"first_frame", "last_frame"}
+                                    or i == 0
+                                    or (
+                                        cap["capability_snapshot"]["supports_last_frame"]
+                                        and self.config.get(
+                                            "integration_generate_last_frame", False
+                                        )
+                                        and not (supplied_last and i == len(lengths) - 1)
+                                    )
+                                )
+                            ),
                         }
                     )
+                try:
+                    model = self._variant_model(generator, shots, cap["model"])
+                except ValueError:
+                    warnings.append(
+                        "Ending frames switch provider endpoints; enable ending frames for every shot or shorten the scene."
+                    )
+                    continue
                 variants.append(
                     dict(
-                        **cap,
+                        **{**cap, "model": model},
                         variant_id=variant_id,
                         shots=shots,
                         estimated_cost={
@@ -432,9 +504,11 @@ class GenerationService:
         for identifier in allowed:
             variant = variants[identifier]
             cap = current.get(variant["provider"])
+            generator = self._generator(variant["provider"])
             if (
                 cap is None
-                or cap["model"] != variant["model"]
+                or self._variant_model(generator, variant["shots"], cap["model"])
+                != variant["model"]
                 or cap["capability_snapshot"] != variant["capability_snapshot"]
             ):
                 raise ValueError(
@@ -443,7 +517,9 @@ class GenerationService:
             generator = self._generator(variant["provider"])
             ratio = request_scenes[plan_scenes[identifier]]["delivery"]["aspect_ratio"]
             estimates = [
-                self._estimate_cost(generator, variant["provider"], shot["nominal_duration_s"], ratio)
+                self._estimate_cost(
+                    generator, variant["provider"], shot["nominal_duration_s"], ratio
+                )
                 for shot in variant["shots"]
             ]
             current_cost = (
@@ -475,26 +551,42 @@ class GenerationService:
                 or result["terminal_status"] != "succeeded"
             ):
                 raise ValueError("Keyframe result must be a successful result for this exact plan")
-        if approval["execution_mode"] == "video":
-            for planned_scene in plan["scenes"]:
-                scene = request_scenes[planned_scene["scene_id"]]
-                needs_first_frame = (
-                    not approval["approved_keyframe_result_id"]
-                    and scene["continuity"]["mode"] != "continue_from_previous"
+        for planned_scene in plan["scenes"]:
+            scene = request_scenes[planned_scene["scene_id"]]
+            minimum_calls, image_calls = [], []
+            for variant in planned_scene["variants"]:
+                if variant["variant_id"] not in allowed:
+                    continue
+                shots = sorted(variant["shots"], key=lambda shot: shot["order"])
+                has_first = any(a["role"] == "first_frame" for a in scene["reference_assets"])
+                extras = any(
+                    a["role"] not in {"first_frame", "last_frame"}
+                    for a in scene["reference_assets"]
+                )
+                images = int(
+                    extras
+                    or (not has_first and scene["continuity"]["mode"] != "continue_from_previous")
+                )
+                images += sum(
+                    bool(shot["last_frame_prompt"])
                     and not any(
-                        asset["role"] == "first_frame"
-                        for asset in scene["reference_assets"]
+                        a["role"] == "last_frame" and a["asset_id"] in shot["reference_asset_ids"]
+                        for a in scene["reference_assets"]
                     )
+                    for shot in shots
                 )
-                minimum_calls = min(
-                    len(variant["shots"]) + needs_first_frame
-                    for variant in planned_scene["variants"]
-                    if variant["variant_id"] in allowed
+                if approval["approved_keyframe_result_id"]:
+                    images = 0
+                image_calls.append(images)
+                minimum_calls.append(
+                    images + (len(shots) if approval["execution_mode"] == "video" else 0)
                 )
-                if scene["generation_policy"]["max_attempts"] < minimum_calls:
-                    raise ValueError(
-                        "Scene attempt limit cannot cover required keyframe and video calls"
-                    )
+            if scene["generation_policy"]["max_attempts"] < min(minimum_calls):
+                raise ValueError(
+                    "Scene attempt limit cannot cover required keyframe and video calls"
+                )
+            if min(image_calls) and not approval["allow_unknown_cost"]:
+                raise ValueError("Keyframe generation has unknown cost and needs explicit approval")
         return plan, request
 
     def approve(self, approval):
@@ -600,9 +692,13 @@ class GenerationService:
             from google.cloud import storage
 
             path = directory / (uid() + Path(parsed.path).suffix)
-            storage.Client().bucket(parsed.netloc).blob(
-                parsed.path.lstrip("/")
-            ).download_to_filename(path)
+            credentials = self.config.get("credentials_path")
+            client = (
+                storage.Client.from_service_account_json(credentials)
+                if credentials and Path(credentials).is_file()
+                else storage.Client()
+            )
+            client.bucket(parsed.netloc).blob(parsed.path.lstrip("/")).download_to_filename(path)
         else:
             raise ValueError("Input assets require durable file:// or gs:// URIs")
         if file_hash(path) != asset["sha256"]:
@@ -644,7 +740,9 @@ class GenerationService:
                     job = self.job(job_id)
                     self._update(
                         job_id,
-                        warnings=list(dict.fromkeys([*job["warnings"], "Asset publication pending"])),
+                        warnings=list(
+                            dict.fromkeys([*job["warnings"], "Asset publication pending"])
+                        ),
                     )
                 except KeyError:
                     pass
@@ -656,6 +754,40 @@ class GenerationService:
             "role": role,
             "rights_note": None,
         }
+
+    def _deliver_clip(self, path, delivery, directory, result, job_id):
+        """Keep the provider output and encode the requested delivery before hashing it."""
+        media = probe(path)
+        width, height = delivery["target_width"], delivery["target_height"]
+        resize = (media["width"], media["height"]) != (width, height)
+        mute = delivery["audio_policy"] == "mute" and media["has_audio"]
+        if not resize and not mute:
+            return Path(path)
+        source = self._asset(path, "provider_output", job_id)
+        result["reference_assets"].append(source)
+        destination = directory / (uid() + ".mp4")
+        command = ["ffmpeg", "-v", "error", "-i", str(path), "-map", "0:v:0"]
+        if not mute:
+            command += ["-map", "0:a?", "-c:a", "copy"]
+        if resize:
+            command += [
+                "-vf",
+                f"scale={width}:{height}:force_original_aspect_ratio=decrease:force_divisible_by=2,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,setsar=1",
+                "-c:v",
+                "libx264",
+                "-pix_fmt",
+                "yuv420p",
+            ]
+        else:
+            command += ["-c:v", "copy"]
+        command += ["-y", str(destination)]
+        subprocess.run(command, check=True, capture_output=True)
+        measured = probe(destination)
+        if (measured["width"], measured["height"]) != (width, height) or (
+            mute and measured["has_audio"]
+        ):
+            raise ValueError("Encoded clip does not satisfy delivery policy")
+        return destination
 
     def _provider_references(self, output, fallback_ids, result, job_id):
         """Snapshot exact post-preparation inputs reported by the provider adapter."""
@@ -682,7 +814,11 @@ class GenerationService:
             if path in sources:
                 source_sha = file_hash(sources[path])
                 source_asset = next(
-                    (a for a in known if a["sha256"] == source_sha and a["asset_id"] in fallback_ids),
+                    (
+                        a
+                        for a in known
+                        if a["sha256"] == source_sha and a["asset_id"] in fallback_ids
+                    ),
                     None,
                 ) or next((a for a in known if a["sha256"] == source_sha and a is not asset), None)
                 if source_asset is None:
@@ -690,7 +826,9 @@ class GenerationService:
                 prepared_sources[asset["asset_id"]] = source_asset["asset_id"]
                 cleanup_prepared_reference(path)
         if prepared_sources:
-            output.parameters["prepared_reference_sources"] = canonical_bytes(prepared_sources).decode()
+            output.parameters["prepared_reference_sources"] = canonical_bytes(
+                prepared_sources
+            ).decode()
         return ids
 
     @contextmanager
@@ -805,7 +943,8 @@ class GenerationService:
         except Exception:
             warnings.append("Result is durable locally; object-store publication failed.")
         warnings = [
-            warning for warning in self.job(result["job_id"])["warnings"]
+            warning
+            for warning in self.job(result["job_id"])["warnings"]
             if warning != "Result publication pending"
         ] + warnings
         if self.config.get("gcs_bucket") and urlsplit(uri).scheme == "file":
@@ -899,7 +1038,10 @@ class GenerationService:
                     directory.mkdir(parents=True, exist_ok=True)
                     scene_references = list(scene["reference_assets"])
                     continues = scene["continuity"]["mode"] == "continue_from_previous"
-                    inherited_frame = previous_scene_boundary if continues else None
+                    has_supplied_first = any(a["role"] == "first_frame" for a in scene_references)
+                    inherited_frame = (
+                        previous_scene_boundary if continues and not has_supplied_first else None
+                    )
                     if inherited_frame:
                         boundary_asset = self._asset(inherited_frame, "first_frame", job_id)
                         if previous_scene_take:
@@ -962,8 +1104,10 @@ class GenerationService:
                                 out["warnings"].append("Scene attempt limit reached")
                                 break
                             estimate = self._estimate_cost(
-                                generator, variant["provider"], shot["nominal_duration_s"],
-                                scene["delivery"]["aspect_ratio"]
+                                generator,
+                                variant["provider"],
+                                shot["nominal_duration_s"],
+                                scene["delivery"]["aspect_ratio"],
                             )
                             if variant["estimated_cost"]["amount"] is None:
                                 estimate = None
@@ -1011,6 +1155,7 @@ class GenerationService:
                                         refs[a["asset_id"]]
                                         for a in scene_references
                                         if a["role"] == "last_frame"
+                                        and a["asset_id"] in shot["reference_asset_ids"]
                                     ),
                                     None,
                                 )
@@ -1024,7 +1169,11 @@ class GenerationService:
                                     supplied_frame = (
                                         reference if position == "first" else supplied_last
                                     )
-                                    if supplied_frame:
+                                    if supplied_frame and not (
+                                        position == "first"
+                                        and extra_references
+                                        and shot["order"] == 0
+                                    ):
                                         path = supplied_frame
                                     else:
                                         if call_count >= scene["generation_policy"]["max_attempts"]:
@@ -1183,6 +1332,8 @@ class GenerationService:
                                         if failure:
                                             raise ValueError("Keyframe generation failed")
                                     frames[position] = str(path)
+                                    if position == "first":
+                                        reference = str(path)
                                     asset = self._asset(path, "keyframe", job_id)
                                     out["keyframes"].append(
                                         {
@@ -1249,6 +1400,7 @@ class GenerationService:
                                         last_frame_path=frames.get("last"),
                                         aspect_ratio=scene["delivery"]["aspect_ratio"],
                                         approved_prompt=True,
+                                        approved_model=variant["model"],
                                         cancellation_check=lambda: self.job(job_id)[
                                             "cancel_requested"
                                         ],
@@ -1338,8 +1490,11 @@ class GenerationService:
                             if error:
                                 last_failed = attempt["attempt_id"]
                                 break
-                            asset = self._asset(output.path, "generated_clip", job_id)
-                            media = probe(output.path)
+                            delivered_path = self._deliver_clip(
+                                output.path, scene["delivery"], directory, result, job_id
+                            )
+                            asset = self._asset(delivered_path, "generated_clip", job_id)
+                            media = probe(delivered_path)
                             if not media["measured_duration_s"]:
                                 raise ValueError("Generated clip has no measured duration")
                             clip = {
@@ -1349,7 +1504,10 @@ class GenerationService:
                                 "media": media,
                             }
                             out["clips"].append(clip)
-                            if scene["delivery"]["audio_policy"] == "required" and not media["has_audio"]:
+                            if (
+                                scene["delivery"]["audio_policy"] == "required"
+                                and not media["has_audio"]
+                            ):
                                 raise ValueError("Generated clip has no required audio")
                             complete.append(clip)
                             # Continue from the actual generated boundary, rather than an imagined last frame.
@@ -1362,7 +1520,7 @@ class GenerationService:
                                     "-sseof",
                                     "-0.1",
                                     "-i",
-                                    output.path,
+                                    str(delivered_path),
                                     "-frames:v",
                                     "1",
                                     "-y",
@@ -1417,7 +1575,7 @@ class GenerationService:
                         previous_scene_take = previous_scene_boundary = None
                     if self.job(job_id)["cancel_requested"]:
                         out["status"] = "canceled"
-                    elif out["status"] != "succeeded" and out["clips"]:
+                    elif out["status"] != "succeeded" and (out["clips"] or out["keyframes"]):
                         out["status"] = "partial"
                     self._update(
                         job_id, progress=round(100 * len(result["scenes"]) / len(request["scenes"]))
@@ -1425,7 +1583,7 @@ class GenerationService:
                 except sqlite3.Error, OSError:
                     raise
                 except Exception as scene_error:
-                    out["status"] = "partial" if out["clips"] else "failed"
+                    out["status"] = "partial" if out["clips"] or out["keyframes"] else "failed"
                     out["warnings"].append(f"Scene stopped: {type(scene_error).__name__}")
                     previous_scene_take = previous_scene_boundary = None
 
@@ -1463,7 +1621,7 @@ class GenerationService:
                 else (
                     "partial"
                     if any(
-                        s["takes"] or s["clips"] or s["status"] == "succeeded"
+                        s["takes"] or s["clips"] or s["keyframes"] or s["status"] == "succeeded"
                         for s in result["scenes"]
                     )
                     else "failed"

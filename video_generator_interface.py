@@ -15,7 +15,9 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from functools import wraps
 import inspect
+import hashlib
 import os
+import shutil
 from pathlib import Path
 from tempfile import gettempdir
 
@@ -79,6 +81,26 @@ def cleanup_prepared_reference(path):
         prepared.unlink(missing_ok=True)
 
 
+def retain_prepared_references(details, output_path):
+    """Keep exact submitted bytes beside the output and release preparation temps."""
+    replacements = {}
+    for source, prepared in details["reference_sources"]:
+        path = Path(prepared)
+        if not path.is_file():
+            continue
+        with path.open("rb") as stream:
+            digest = hashlib.file_digest(stream, "sha256").hexdigest()
+        destination = Path(output_path).resolve().parent / "provider-references" / (digest + path.suffix)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        if not destination.exists():
+            shutil.copy2(path, destination)
+        replacements[prepared] = str(destination)
+    details["reference_paths"] = tuple(replacements.get(path, path) for path in details["reference_paths"])
+    details["reference_sources"] = tuple((source, replacements.get(prepared, prepared))
+                                         for source, prepared in details["reference_sources"])
+    return replacements
+
+
 def recorded_generation(provider):
     def decorate(function):
         default_duration = inspect.signature(function).parameters["duration"].default
@@ -90,9 +112,12 @@ def recorded_generation(provider):
                            billing=BillingObservation(),
                            reference_paths=(os.fspath(input_image_path),), reference_sources=())
             token = _call_details.set(details)
+            prepared_paths = set()
             try:
                 set_generation_details()
                 path = function(self, prompt, input_image_path, output_path, duration, **kwargs)
+                prepared_paths.update(prepared for _, prepared in details["reference_sources"])
+                retain_prepared_references(details, output_path)
                 output = GenerationOutput(path=os.fspath(path), started_at=started,
                                         finished_at=datetime.now(timezone.utc), **details)
                 from api.generation_ledger import active_ledger
@@ -100,6 +125,8 @@ def recorded_generation(provider):
                     ledger.record(output, None, [input_image_path, kwargs.get("last_frame_path")])
                 return output
             except BaseException as error:
+                prepared_paths.update(prepared for _, prepared in details["reference_sources"])
+                retain_prepared_references(details, output_path)
                 error.generation_output = GenerationOutput(
                     path=output_path, started_at=started,
                     finished_at=datetime.now(timezone.utc), **details)
@@ -108,6 +135,8 @@ def recorded_generation(provider):
                     ledger.record(error.generation_output, error, [input_image_path, kwargs.get("last_frame_path")])
                 raise
             finally:
+                for prepared in prepared_paths:
+                    cleanup_prepared_reference(prepared)
                 _call_details.reset(token)
         return wrapped
     return decorate

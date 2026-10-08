@@ -340,6 +340,27 @@ Start with [`examples/pipeline_config.h3-max.yaml`](examples/pipeline_config.h3-
 
 The transport-neutral generation contract is available under `api/contracts/v1_0` and through `GET /v2/schemas/{name}`. Media Tooling vendors that directory and pins `schema-hashes.json`; the repositories share no runtime imports.
 
+Plans bind the effective Fal endpoint, including first/last-frame routing, and
+reject oversized provider prompts before execution. Each scene's attempt limit
+must cover its planned unsupplied images and video calls. Image work requires
+explicit unknown-cost permission. Fixed-frame Wan2.1 and Hunyuan adapters are
+blocked in v2 planning until they provide verified duration control.
+
+Successful clips use the requested even delivery dimensions. TTV scales and pads
+provider output when needed and strips audio for `audio_policy: mute` before
+hashing the delivered asset. Original provider files remain available as
+`provider_output` assets. Required audio is checked against the encoded clip.
+Retained keyframes make an interrupted scene partial. Prepared input JPEGs are
+stored by content hash beside the output, and temporary files are removed on
+both successful and failed calls. GCS inputs use configured service-account
+credentials when available.
+
+Media Tooling's `media-motion-graphics` skill exports reviewed storyboard scenes
+with stable IDs and archived image review evidence. Imported takes become
+content layers in HyperFrames, where typography, UI motion, overlays, and timing
+remain editable. Footage revisions use targeted generation requests and new
+editorial selections. See [Media Tooling's handoff guide](https://github.com/kumanday/media-tooling/blob/feat/ttv-media-integration/docs/generated-media.md).
+
 Set `AUTH_TOKEN` to protect v1/v2 plans, jobs, results and cancellation. Capability and schema discovery remain public. Use `POST /v2/plans` with a hashed `GenerationRequest`, review the returned provider variants, then submit a hashed `PlanApproval` to `POST /v2/jobs`. Approvals bind the exact plan hash, allowed variants, keyframe/video mode and budget. Unknown estimates are null and require explicit `allow_unknown_cost`. `GET /v2/jobs/{id}/result` returns the immutable terminal attempt ledger, source clips, keyframes and take dependencies. Provider inputs and outputs are retained by content hash, including prepared reference images. Cancellation retains completed artifacts and attempts. Regeneration requests include only the scenes being replaced and identify prior result/take IDs.
 
 Planning derives reviewed prompts directly from scene intent and reuses the existing provider-duration planner. The v2 path performs deterministic decomposition. Provider support for an ending frame does not itself schedule a paid image call. A reviewed-keyframe video approval can execute only variants whose frames exist in the referenced keyframe result.

@@ -247,7 +247,8 @@ def test_unapproved_fallback_and_cancellation(tmp_path):
     ap = approval(plan)
     ap["approved_variant_ids"] = ap["approved_variant_ids"][:1]
     result = svc.run(svc.approve(seal(ap))["id"])
-    assert result["terminal_status"] == "failed"
+    assert result["terminal_status"] == "partial"
+    assert result["scenes"][0]["keyframes"] and not result["scenes"][0]["takes"]
     assert FakeProvider.calls == ["failing"]
     svc = service(tmp_path / "cancel")
     plan = svc.plan(request())
@@ -276,7 +277,8 @@ def test_keyframe_approval_and_http_parity(tmp_path):
     assert result_video["terminal_status"] == "partial"
     assert all(
         frame["attempt_id"] is None
-        for scene in result_video["scenes"] for frame in scene["keyframes"]
+        for scene in result_video["scenes"]
+        for frame in scene["keyframes"]
     )
     app = FastAPI()
     app.state.generation_service = svc
@@ -510,11 +512,15 @@ def test_boundary_roles_and_clip_edit_span_are_unambiguous(tmp_path):
     req = request()
     req["scenes"] = [req["scenes"][0]]
     asset = {
-        "uri": "gs://fixture/frame.png", "sha256": "sha256:" + "0" * 64,
-        "mime_type": "image/png", "role": "first_frame", "rights_note": None,
+        "uri": "gs://fixture/frame.png",
+        "sha256": "sha256:" + "0" * 64,
+        "mime_type": "image/png",
+        "role": "first_frame",
+        "rights_note": None,
     }
     req["scenes"][0]["reference_assets"] = [
-        {**asset, "asset_id": "first-a"}, {**asset, "asset_id": "first-b"},
+        {**asset, "asset_id": "first-a"},
+        {**asset, "asset_id": "first-b"},
     ]
     with pytest.raises(ValueError, match="Multiple first_frame"):
         service(tmp_path).plan(seal(req))
@@ -526,8 +532,11 @@ def test_boundary_roles_and_clip_edit_span_are_unambiguous(tmp_path):
     with pytest.raises(ValueError, match="Multiple last_frame"):
         service(tmp_path).plan(seal(req))
 
-    selection = json.loads((Path(__file__).parents[1] /
-        "api/contracts/v1_0/fixtures/EditorialSelection.valid.json").read_text())
+    selection = json.loads(
+        (
+            Path(__file__).parents[1] / "api/contracts/v1_0/fixtures/EditorialSelection.valid.json"
+        ).read_text()
+    )
     edit = selection["scenes"][0]["clip_edits"][0]
     edit["trim_in_s"] = edit["trim_out_s"]
     with pytest.raises(ValueError, match="out-point"):
@@ -538,13 +547,21 @@ def test_prompt_order_and_range_duration_are_canonical(tmp_path):
     class RangeProvider(FakeProvider):
         def get_capabilities(self):
             return {
-                "model": self.name, "max_duration": 5,
-                "supports_image_to_video": True, "supports_audio": False,
+                "model": self.name,
+                "max_duration": 5,
+                "supports_image_to_video": True,
+                "supports_audio": False,
             }
 
     svc = service(tmp_path)
     svc.generator_factory = lambda name, config: RangeProvider(name)
-    assert svc.capabilities()["providers"][0]["capability_snapshot"]["allowed_durations_s"] == [1, 2, 3, 4, 5]
+    assert svc.capabilities()["providers"][0]["capability_snapshot"]["allowed_durations_s"] == [
+        1,
+        2,
+        3,
+        4,
+        5,
+    ]
     req = request()
     req["scenes"] = [req["scenes"][0]]
     req["scenes"][0]["requested_duration_s"] = 1
@@ -553,9 +570,11 @@ def test_prompt_order_and_range_duration_are_canonical(tmp_path):
     plan = svc.plan(seal(req))
     shot = plan["scenes"][0]["variants"][0]["shots"][0]
     assert shot["nominal_duration_s"] == 1
-    assert shot["prompt_snapshot"] == "\n".join(intent[field] for field in (
-        "summary", "entry_state", "exit_state", "continuity_notes"
-    ) if intent[field])
+    assert shot["prompt_snapshot"] == "\n".join(
+        intent[field]
+        for field in ("summary", "entry_state", "exit_state", "continuity_notes")
+        if intent[field]
+    )
 
 
 def test_direct_minimax_keeps_approved_prompt(tmp_path, monkeypatch):
@@ -574,10 +593,14 @@ def test_direct_minimax_keeps_approved_prompt(tmp_path, monkeypatch):
         submitted.append(prompt) or {"video_url": "fixture"}
     )
     generator._extract_video_url = lambda response: response["video_url"]
-    monkeypatch.setattr(minimax, "download_file", lambda url, path: Path(path).write_bytes(b"video"))
+    monkeypatch.setattr(
+        minimax, "download_file", lambda url, path: Path(path).write_bytes(b"video")
+    )
     frame = tmp_path / "first.png"
     keyframe("", frame, None)
-    approved = generator.generate_video("Original", str(frame), str(tmp_path / "approved.mp4"), approved_prompt=True)
+    approved = generator.generate_video(
+        "Original", str(frame), str(tmp_path / "approved.mp4"), approved_prompt=True
+    )
     generator.generate_video("Original", str(frame), str(tmp_path / "legacy.mp4"))
     assert submitted == ["Original", "[Static]Original"]
     assert approved.prompt == "Original"
@@ -628,15 +651,18 @@ def test_provider_prepared_inputs_are_retained_by_content_hash(tmp_path, source_
             replace_generation_reference(input_image_path, prepared)
             return output_path
 
-    observed = PreparedProvider().generate_video("prompt", str(original), "unused")
-    assert observed.reference_paths == (str(prepared),)
+    prepared_hash = file_hash(prepared)
+    observed = PreparedProvider().generate_video("prompt", str(original), str(tmp_path / "unused"))
+    assert not prepared.exists()
+    assert file_hash(observed.reference_paths[0]) == prepared_hash
     svc = service(tmp_path / "service")
-    source = svc._asset(original, "first_frame" if source_kind == "reference" else "keyframe", "fixture")
+    source = svc._asset(
+        original, "first_frame" if source_kind == "reference" else "keyframe", "fixture"
+    )
     result = {
         "reference_assets": [source] if source_kind == "reference" else [],
         "scenes": [] if source_kind == "reference" else [{"keyframes": [{"asset": source}]}],
     }
-    prepared_hash = file_hash(prepared)
     ids = svc._provider_references(observed, [source["asset_id"]], result, "fixture")
     assert ids == [result["reference_assets"][-1]["asset_id"]]
     asset = result["reference_assets"][-1]
@@ -668,7 +694,7 @@ def test_prepared_first_and_last_keyframes_attest_both_sources(tmp_path):
             replace_generation_reference(str(last), prepared_last)
             return output_path
 
-    output = PreparedProvider().generate_video("prompt", str(first), "unused")
+    output = PreparedProvider().generate_video("prompt", str(first), str(tmp_path / "unused"))
     svc = service(tmp_path / "service")
     sources = [svc._asset(path, "keyframe", "fixture") for path in (first, last)]
     result = {
@@ -917,10 +943,17 @@ def test_unknown_veo_price_requires_explicit_approval(tmp_path, monkeypatch):
     frame = tmp_path / "first.png"
     keyframe("", frame, None)
     from api.generation_service import file_hash
-    req["scenes"][0]["reference_assets"] = [{
-        "asset_id": "first", "uri": frame.as_uri(), "sha256": file_hash(frame),
-        "mime_type": "image/png", "role": "first_frame", "rights_note": None,
-    }]
+
+    req["scenes"][0]["reference_assets"] = [
+        {
+            "asset_id": "first",
+            "uri": frame.as_uri(),
+            "sha256": file_hash(frame),
+            "mime_type": "image/png",
+            "role": "first_frame",
+            "rights_note": None,
+        }
+    ]
     req["scenes"][0]["generation_policy"]["provider_preferences"] = ["veo3"]
     plan = svc.plan(seal(req))
     assert plan["scenes"][0]["variants"][0]["estimated_cost"]["amount"] is None
@@ -1016,9 +1049,12 @@ def test_duplicate_reference_ids_and_missing_first_frame_block_before_execution(
     req = request()
     req["scenes"] = [req["scenes"][0]]
     asset = {
-        "asset_id": "duplicate", "uri": "gs://fixture/frame.png",
-        "sha256": "sha256:" + "0" * 64, "mime_type": "image/png",
-        "role": "first_frame", "rights_note": None,
+        "asset_id": "duplicate",
+        "uri": "gs://fixture/frame.png",
+        "sha256": "sha256:" + "0" * 64,
+        "mime_type": "image/png",
+        "role": "first_frame",
+        "rights_note": None,
     }
     req["scenes"][0]["reference_assets"] = [asset, {**asset, "role": "last_frame"}]
     with pytest.raises(ValueError, match="Duplicate asset_id"):
@@ -1060,20 +1096,38 @@ def test_parallel_legacy_events_follow_segment_number(tmp_path, monkeypatch):
     from api.generation_ledger import LegacyLedger
     from video_generator_interface import GenerationOutput
 
-    monkeypatch.setattr("api.generation_ledger.probe", lambda path: {
-        "measured_duration_s": 1.0, "width": 320, "height": 180,
-        "fps": 10.0, "has_audio": False,
-    })
+    monkeypatch.setattr(
+        "api.generation_ledger.probe",
+        lambda path: {
+            "measured_duration_s": 1.0,
+            "width": 320,
+            "height": 180,
+            "fps": 10.0,
+            "has_audio": False,
+        },
+    )
     ledger = LegacyLedger(tmp_path, "parallel")
     later = datetime.now(UTC)
     for number, started in [(2, later), (1, later + timedelta(seconds=1))]:
         path = tmp_path / f"segment_{number:02d}.mp4"
         path.write_bytes(f"segment {number}".encode())
-        ledger.record(GenerationOutput(
-            path=str(path), provider="offline-fixture", model=None, model_version=None,
-            provider_request_id=None, seed=None, parameters={}, prompt="frame",
-            billing=None, reference_paths=(), started_at=started, finished_at=started,
-        ), None)
+        ledger.record(
+            GenerationOutput(
+                path=str(path),
+                provider="offline-fixture",
+                model=None,
+                model_version=None,
+                provider_request_id=None,
+                seed=None,
+                parameters={},
+                prompt="frame",
+                billing=None,
+                reference_paths=(),
+                started_at=started,
+                finished_at=started,
+            ),
+            None,
+        )
     ledger.finish()
     result = json.loads((ledger.root / "result.json").read_text())
     assert [event["segment"] for event in ledger.events] == [1, 2]
@@ -1112,3 +1166,244 @@ def test_provider_http_failure_retains_status_without_response_secrets(tmp_path)
         "message": "Provider request failed with HTTP 402.",
     }
     assert b"sensitive" not in canonical_bytes(result)
+
+
+@pytest.mark.parametrize("mode,limit", [("video", 2), ("keyframes", 1)])
+def test_approval_counts_synthesized_ending_frames(tmp_path, mode, limit):
+    svc = service(tmp_path)
+    svc.config["integration_generate_last_frame"] = True
+    factory = svc.generator_factory
+
+    def capable(name, config):
+        generator = factory(name, config)
+        original = generator.get_capabilities
+        generator.get_capabilities = lambda: {**original(), "supports_first_last_frame": True}
+        return generator
+
+    svc.generator_factory = capable
+    req = request()
+    req["scenes"] = [req["scenes"][0]]
+    req["scenes"][0]["generation_policy"]["max_attempts"] = limit
+    with pytest.raises(ValueError, match="attempt limit"):
+        svc.approve(approval(svc.plan(seal(req)), mode))
+    with svc.db() as db:
+        assert db.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 0
+        assert db.execute("SELECT COUNT(*) FROM provider_calls").fetchone()[0] == 0
+
+
+def test_partial_keyframes_survive_a_later_image_failure(tmp_path):
+    svc = service(tmp_path)
+    svc.config["integration_generate_last_frame"] = True
+    factory = svc.generator_factory
+
+    def capable(name, config):
+        generator = factory(name, config)
+        original = generator.get_capabilities
+        generator.get_capabilities = lambda: {**original(), "supports_first_last_frame": True}
+        return generator
+
+    svc.generator_factory = capable
+
+    def images(prompt, path, reference):
+        if reference:
+            raise VideoGenerationError("second image failed")
+        return keyframe(prompt, path, reference)
+
+    svc.keyframe_generator = images
+    req = request()
+    req["scenes"] = [req["scenes"][0]]
+    result = svc.run(svc.approve(approval(svc.plan(seal(req)), "keyframes"))["id"])
+    assert result["terminal_status"] == "partial"
+    scene = result["scenes"][0]
+    assert scene["status"] == "partial" and len(scene["keyframes"]) == 1
+    assert not scene["clips"] and not scene["takes"]
+
+
+def test_delivery_normalizes_dimensions_and_strips_audio(tmp_path):
+    from urllib.parse import urlsplit
+
+    from api.generation_service import file_hash, probe
+
+    svc = service(tmp_path)
+    req = request()
+    req["scenes"] = [req["scenes"][0]]
+    req["scenes"][0]["delivery"].update(
+        target_width=180, target_height=320, aspect_ratio="9:16", audio_policy="mute"
+    )
+    result = svc.run(svc.approve(approval(svc.plan(seal(req))))["id"])
+    assert result["terminal_status"] == "succeeded"
+    clip = result["scenes"][0]["clips"][0]
+    path = Path(urlsplit(clip["asset"]["uri"]).path)
+    media = probe(path)
+    assert (media["width"], media["height"], media["has_audio"]) == (180, 320, False)
+    assert file_hash(path) == clip["asset"]["sha256"]
+    original = next(a for a in result["reference_assets"] if a["role"] == "provider_output")
+    assert probe(Path(urlsplit(original["uri"]).path))["has_audio"] is True
+
+
+def test_gcs_inputs_use_configured_credentials(tmp_path, monkeypatch):
+    from google.cloud import storage
+
+    from api.generation_service import file_hash
+
+    svc = service(tmp_path / "service")
+    credentials = tmp_path / "credentials.json"
+    credentials.write_text("{}")
+    frame = tmp_path / "frame.png"
+    keyframe("", frame, None)
+    svc.config.update(
+        credentials_path=str(credentials), integration_asset_uri_prefixes=["gs://fixture/inputs"]
+    )
+    clients = []
+
+    class Client:
+        def bucket(self, name):
+            assert name == "fixture"
+            return self
+
+        def blob(self, name):
+            assert name == "inputs/frame.png"
+            return self
+
+        def download_to_filename(self, destination):
+            destination.write_bytes(frame.read_bytes())
+
+    monkeypatch.setattr(
+        storage.Client, "from_service_account_json", lambda path: clients.append(path) or Client()
+    )
+    asset = {"uri": "gs://fixture/inputs/frame.png", "sha256": file_hash(frame)}
+    destination = svc._materialize(asset, svc.root)
+    assert clients == [str(credentials)] and file_hash(destination) == asset["sha256"]
+
+
+@pytest.mark.parametrize("provider", ["wan2.1", "hunyuan"])
+def test_fixed_frame_local_adapters_do_not_advertise_variable_duration(tmp_path, provider):
+    from generators.local.hunyuan_video_generator import HunyuanVideoGenerator
+    from generators.local.wan21_generator import Wan21Generator
+
+    if provider == "wan2.1":
+        generator = object.__new__(Wan21Generator)
+        generator.i2v_model_dir = generator.flf2v_model_dir = "fixture"
+    else:
+        generator = object.__new__(HunyuanVideoGenerator)
+        generator.max_duration = 5
+    assert generator.get_capabilities()["allowed_durations"] == []
+    svc = service(tmp_path)
+    svc.config.update(default_backend=provider, integration_providers=[])
+    svc.generator_factory = lambda name, config: generator
+    req = request()
+    req["scenes"] = [req["scenes"][0]]
+    req["scenes"][0]["generation_policy"]["provider_preferences"] = [provider]
+    assert svc.plan(seal(req))["status"] == "blocked"
+
+
+@pytest.mark.parametrize("provider,limit", [("runway", 500), ("minimax", 500)])
+def test_prompt_limits_block_before_execution(tmp_path, provider, limit):
+    svc = service(tmp_path)
+    svc.config.update(default_backend=provider, integration_providers=[])
+
+    class Limited(FakeProvider):
+        def get_capabilities(self):
+            return {**super().get_capabilities(), "max_prompt_length": limit}
+
+    svc.generator_factory = lambda name, config: Limited(name)
+    req = request()
+    req["scenes"] = [req["scenes"][0]]
+    req["scenes"][0]["intent"]["summary"] = "x" * (limit + 1)
+    req["scenes"][0]["generation_policy"]["provider_preferences"] = [provider]
+    plan = svc.plan(seal(req))
+    assert plan["status"] == "blocked"
+    assert "prompt exceeds" in " ".join(plan["scenes"][0]["warnings"])
+    assert FakeProvider.calls == []
+
+
+@pytest.mark.parametrize("last", [False, True])
+def test_fal_plan_binds_effective_endpoint(tmp_path, last):
+    from generators.remote.fal_generator import FalGenerator
+
+    svc = service(tmp_path)
+    generator = FalGenerator({"model": "fal-ai/veo3.1/image-to-video", "api_key": "offline"})
+    svc.generator_factory = lambda name, config: generator
+    svc.config.update(
+        default_backend="fal", integration_providers=[], integration_generate_last_frame=last
+    )
+    req = request()
+    req["scenes"] = [req["scenes"][0]]
+    req["scenes"][0]["requested_duration_s"] = 4
+    req["scenes"][0]["generation_policy"]["provider_preferences"] = ["fal"]
+    plan = svc.plan(seal(req))
+    variant = plan["scenes"][0]["variants"][0]
+    assert variant["model"] == generator.effective_model(last)
+    assert bool(variant["shots"][0]["last_frame_prompt"]) is last
+    svc.approve(approval(plan))
+
+
+def test_duplicate_variant_ids_are_rejected():
+    path = Path(__file__).parents[1] / "api/contracts/v1_0/fixtures/GenerationPlan.valid.json"
+    plan = json.loads(path.read_text())
+    duplicate = copy.deepcopy(plan["scenes"][0])
+    duplicate.update(scene_id="other", order=2)
+    plan["scenes"].append(duplicate)
+    with pytest.raises(ValueError, match="Duplicate variant_id"):
+        validate("GenerationPlan", seal(plan))
+
+
+@pytest.mark.parametrize("failure", [False, True])
+def test_prepared_temps_are_removed_after_direct_calls(tmp_path, failure):
+    from api.generation_service import file_hash
+    from generators.base import ImageValidator
+    from video_generator_interface import replace_generation_reference
+
+    original = tmp_path / "input.png"
+    keyframe("", original, None)
+    prepared = ImageValidator.prepare_image_for_api(str(original))
+    expected = file_hash(prepared)
+
+    class Prepared:
+        @recorded_generation("prepared")
+        def generate_video(self, prompt, input_image_path, output_path, duration=1, **kwargs):
+            replace_generation_reference(input_image_path, prepared)
+            if failure:
+                raise VideoGenerationError("fixture failure")
+            return output_path
+
+    if failure:
+        with pytest.raises(VideoGenerationError) as caught:
+            Prepared().generate_video("approved", str(original), str(tmp_path / "output.mp4"))
+        output = caught.value.generation_output
+    else:
+        output = Prepared().generate_video("approved", str(original), str(tmp_path / "output.mp4"))
+    assert not Path(prepared).exists()
+    assert file_hash(output.reference_paths[0]) == expected
+    assert output.reference_sources == ((str(original), output.reference_paths[0]),)
+
+
+def test_multi_shot_references_bind_only_calls_that_consume_them(tmp_path):
+    from api.generation_service import file_hash
+
+    svc = service(tmp_path)
+    reference = tmp_path / "style.png"
+    keyframe("", reference, None)
+    req = request()
+    req["scenes"] = [req["scenes"][1]]
+    scene = req["scenes"][0]
+    scene["reference_assets"] = [
+        {
+            "asset_id": "style",
+            "uri": reference.as_uri(),
+            "sha256": file_hash(reference),
+            "mime_type": "image/png",
+            "role": "style",
+            "rights_note": None,
+        }
+    ]
+    scene["continuity"]["required_reference_asset_ids"] = ["style"]
+    plan = svc.plan(seal(req))
+    shots = plan["scenes"][0]["variants"][0]["shots"]
+    assert [shot["reference_asset_ids"] for shot in shots] == [["style"], [], []]
+    result = svc.run(svc.approve(approval(plan))["id"])
+    assert result["terminal_status"] == "succeeded"
+    image_attempt = next(
+        a for a in result["scenes"][0]["attempts"] if a["provider"] == "offline-fixture"
+    )
+    assert "style" in image_attempt["reference_asset_ids"]

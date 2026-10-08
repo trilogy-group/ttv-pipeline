@@ -44,6 +44,9 @@ class HunyuanVideoGenerator(VideoGeneratorInterface):
     def get_capabilities(self) -> Dict[str, Any]:
         return {
             "max_duration": self.max_duration,
+            # The checkpoint controls frame count; this adapter only sets fps.
+            "allowed_durations": [],
+            "model": "hunyuan",
             "supported_resolutions": ["1280x720", "1024x576"],
             "supports_image_to_video": True,
             "supports_text_to_video": False,

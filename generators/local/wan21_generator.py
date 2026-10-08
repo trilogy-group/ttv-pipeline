@@ -40,6 +40,10 @@ class Wan21Generator(VideoGeneratorInterface):
         """Return Wan2.1 capabilities"""
         return {
             "max_duration": 10.0,  # Approximately 5 seconds at 81 frames
+            # Fixed frame_num has no duration-to-frames mapping in this adapter.
+            "allowed_durations": [],
+            "model": "i2v-14B",
+            "max_prompt_length": 1000,
             "supported_resolutions": ["1280*720", "1024*576", "720*480"],
             "supports_image_to_video": True,
             "supports_text_to_video": False,  # Pure text-to-video not used in pipeline

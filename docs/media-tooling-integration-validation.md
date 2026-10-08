@@ -14,7 +14,7 @@ The shipped Media Tooling CLI imported the canonical handoff, selected the take,
 
 ## Automated checks
 
-The expanded focused producer suite passes **162 tests**:
+The focused producer suite passes **193 tests** (Python 3.14.8, 2026-10-08):
 
 ```sh
 python -m pytest tests/test_generation_integration.py tests/test_fal_generator.py tests/test_veo31_duration.py tests/test_keyframe_checkpoints.py tests/test_keyframe_generator_gemini.py tests/test_models.py tests/test_queue.py tests/test_middleware.py -q --tb=short
@@ -22,7 +22,20 @@ python -m pytest tests/test_generation_integration.py tests/test_fal_generator.p
 
 Coverage includes shared contracts, exact approval/expiry/capability guards, billing and budgets, cancellation, regeneration, both workers, HTTP/file canonical parity, prepared input snapshots, durable submission receipts and terminal recovery. Runtime regressions additionally cover v2 authentication and request validation, explicit local publication, optional ending frames, H3 integer payloads and metadata, unknown/resolution-specific Veo prices, safe HTTP failure diagnostics, no repeated paid POST after 429/503, and retaining an accepted request ID before validating lifecycle URLs.
 
-Ruff and Black pass on the integration modules, contract producer, pilot and acceptance tests. Python compilation and `git diff --check` pass. `uv build --wheel --out-dir /tmp/ttv-integration-wheel` succeeds; the wheel contains all five schemas, ten fixtures, the hash manifest and contract README. The shared validator corpus matches in both repositories: seven accepted and fifteen rejected cases.
+Approval regressions reject duplicate variant IDs, undersized attempt budgets
+including ending images, and provider prompts beyond adapter limits. Fal plans
+and execution bind the effective endpoint. Real FFmpeg tests confirm requested
+dimensions, audio removal, preservation of original provider assets, and partial
+results retaining keyframes. Credential selection is covered with a mocked GCS
+download; prepared-reference tests verify exact bytes and removal of temporary
+files after direct successful and failed calls.
+
+The provider-free cross-repository pilot imports this branch's emitted documents
+into current Media Tooling, renders both the original and revised edit, passes
+verification, preserves outer takes, and requires an explicit stale-continuity
+decision. Media Tooling's gate passes 736 tests, Ruff, and mypy.
+
+Ruff and Black pass on the integration modules and acceptance tests. Python compilation and `git diff --check` pass. The shared validator corpus matches in both repositories: the ten vendored fixtures and a duplicate-variant rejection case. All schema, manifest, and fixture JSON bytes match across repositories. The integration wheel check from 2026-09-22 includes all five schemas, ten fixtures, the hash manifest, and contract README.
 
 The existing worker/backend regression set has **90 passed and 21 failed**, with the same failing test names on the immutable base and the initial integration implementation:
 
@@ -68,4 +81,6 @@ The live task evidence directory is `/Users/magos/.codex/worktrees/ttv-media-int
 - An interrupted active provider operation requires operator investigation; its durable receipt prevents replay under the same operation key. Terminal publication can be retried without provider replay.
 - Provider support for ending frames does not schedule one automatically. Supplied `last_frame` references or explicit `integration_generate_last_frame: true` appear in the reviewed plan; an empty `last_frame_prompt` schedules no ending-frame work.
 - A reviewed-keyframe video approval can use only variants represented in that immutable keyframe result.
+- Variants bind one effective provider endpoint. A multi-shot Fal scene whose ending-frame policy changes endpoints must use ending frames for every shot or a shorter scene.
+- Fixed-frame Wan2.1 and Hunyuan adapters have no verified duration control and are blocked in v2 plans.
 - Standalone/v1 provenance sidecars retain their invocation and media; full Media Tooling import uses the v2 request/plan/approval/result chain.

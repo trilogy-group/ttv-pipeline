@@ -271,6 +271,8 @@ class FalGenerator(VideoGeneratorInterface):
         if last_frame_path is not None and not isinstance(last_frame_path, str):
             raise InvalidInputError("last_frame_path must be a path string")
         profile = self._profile_for_request(bool(last_frame_path))
+        if kwargs.get("approved_model") and kwargs["approved_model"] != profile.endpoint:
+            raise InvalidInputError("Effective fal.ai endpoint differs from the approved model")
         if last_frame_path and profile.last_frame_field:
             last_frame_validation = ImageValidator.validate_image(
                 last_frame_path, max_size_mb=profile.max_image_mb
@@ -382,6 +384,9 @@ class FalGenerator(VideoGeneratorInterface):
             )
         )
         return FAL_MODEL_PROFILES[endpoint]
+
+    def effective_model(self, has_last_frame: bool) -> str:
+        return self._profile_for_request(has_last_frame).endpoint
 
     def _build_payload(
         self,

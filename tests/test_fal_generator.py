@@ -17,6 +17,26 @@ from pipeline import (
 from video_generator_interface import APIError, GenerationTimeoutError, InvalidInputError
 
 
+def test_unapproved_effective_endpoint_stops_before_submission(tmp_path, monkeypatch):
+    first, last = _images(tmp_path)
+    calls = []
+    monkeypatch.setattr(
+        "generators.remote.fal_generator.requests.request",
+        lambda *args, **kwargs: calls.append(args),
+    )
+    generator = FalGenerator({"model": "fal-ai/veo3.1/image-to-video", "api_key": "offline"})
+    with pytest.raises(InvalidInputError, match="approved model"):
+        generator.generate_video(
+            "Approved prompt",
+            str(first),
+            str(tmp_path / "output.mp4"),
+            4,
+            last_frame_path=str(last),
+            approved_model=generator.model,
+        )
+    assert calls == []
+
+
 def _response(status_code, payload, headers=None):
     response = Mock(spec=requests.Response)
     response.status_code = status_code
