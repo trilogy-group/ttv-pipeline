@@ -45,6 +45,32 @@ python -m pytest tests/test_models.py tests/test_queue.py tests/test_video_worke
 
 Those failures include deployment configuration/credential-dependent legacy mocks, existing Trio expectations and API authentication fixtures. The artifact endpoint suite likewise matched its baseline: **1 passed, 17 failed**. The complete pre-existing suite is not green in this environment.
 
+## Dependency security validation
+
+The 2026-10-08 lockfile updates cover the six open default-branch Dependabot
+alerts and the additional multidict advisory found by `pip-audit`:
+
+| Package | Locked version | Resolution floor |
+| --- | --- | --- |
+| aiohttp | 3.14.3 | Direct dependency `>=3.14.3` |
+| h2 | 4.4.1 | uv constraint `>=4.4.1` |
+| urllib3 | 2.8.0 | uv constraint `>=2.8.0` |
+| cryptography | 50.0.2 | uv constraint `>=50.0.2` |
+| multidict | 6.9.1 | uv constraint `>=6.9.1` |
+
+Cryptography's major update is an isolated commit, with pyOpenSSL updated to
+26.4.0 for compatibility. Its [upstream changelog](https://cryptography.io/en/latest/changelog/)
+documents the PKCS7 fix and stricter parsing behavior. The [multidict release](https://github.com/aio-libs/multidict/releases/tag/v6.9.1)
+documents its memory-safety fixes. Offline Google service-account RSA signing
+and QUIC configuration smoke tests pass; no live credentials were used.
+
+The complete suite on both the immutable pre-upgrade checkout and each upgraded
+environment reports **471 passed, 111 failed, 4 skipped**. All 111 failing test
+names match the baseline. The 193 focused integration tests pass. Wheel builds,
+integration Ruff checks, and CLI smoke tests pass. Exported locked dependencies
+pass `pip-audit` with no known vulnerabilities. Default-branch alerts require
+merging the updated lockfile and a GitHub rescan.
+
 ## Live HTTP, Redis and RQ
 
 A real Hypercorn server, dedicated loopback Redis server and RQ `SpawnWorker` processed requests from the shipped Media Tooling CLI. The API used its normal lifespan/configuration and routes; deterministic providers replaced only the paid generation boundary. The API and worker shared a task-local durable filesystem. Redis used its own port, with no existing jobs affected.
